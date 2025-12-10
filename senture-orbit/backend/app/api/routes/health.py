@@ -13,6 +13,12 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+@router.get("/ping")
+async def ping() -> Dict[str, str]:
+    """Simple ping endpoint - no dependencies."""
+    return {"status": "pong"}
+
+
 @router.get("/", response_model=Dict[str, Any])
 async def root(settings: Settings = Depends(get_settings)) -> Dict[str, Any]:
     """API root endpoint with basic information."""

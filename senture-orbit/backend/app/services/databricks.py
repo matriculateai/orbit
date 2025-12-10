@@ -1,5 +1,7 @@
 """Databricks SQL service for executing queries."""
+import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from databricks import sql as databricks_sql
@@ -8,6 +10,9 @@ from databricks.sql.client import Connection, Cursor
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
+
+# Thread pool for running blocking database operations
+_executor = ThreadPoolExecutor(max_workers=10)
 
 
 class DatabricksService:
@@ -47,6 +52,51 @@ class DatabricksService:
             finally:
                 self._connection = None
 
+    def _execute_query_sync(
+        self,
+        query: str,
+        parameters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Synchronous query execution (runs in thread pool).
+
+        Args:
+            query: SQL query string
+            parameters: Optional parameter dictionary
+
+        Returns:
+            List of dictionaries with query results
+        """
+        connection = self._get_connection()
+        cursor: Cursor = connection.cursor()
+
+        try:
+            logger.debug(f"Executing query: {query[:200]}...")
+
+            if parameters:
+                cursor.execute(query, parameters)
+            else:
+                cursor.execute(query)
+
+            # Get column names
+            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+
+            # Fetch all results
+            rows = cursor.fetchall()
+
+            # Convert to list of dictionaries
+            results = []
+            for row in rows:
+                row_dict = {}
+                for i, value in enumerate(row):
+                    row_dict[columns[i]] = value
+                results.append(row_dict)
+
+            logger.info(f"Query returned {len(results)} rows")
+            return results
+
+        finally:
+            cursor.close()
+
     async def execute_query(
         self,
         query: str,
@@ -61,38 +111,14 @@ class DatabricksService:
         Returns:
             List of dictionaries with query results
         """
+        loop = asyncio.get_event_loop()
         try:
-            connection = self._get_connection()
-            cursor: Cursor = connection.cursor()
-
-            try:
-                logger.debug(f"Executing query: {query[:200]}...")
-
-                if parameters:
-                    cursor.execute(query, parameters)
-                else:
-                    cursor.execute(query)
-
-                # Get column names
-                columns = [desc[0] for desc in cursor.description] if cursor.description else []
-
-                # Fetch all results
-                rows = cursor.fetchall()
-
-                # Convert to list of dictionaries
-                results = []
-                for row in rows:
-                    row_dict = {}
-                    for i, value in enumerate(row):
-                        row_dict[columns[i]] = value
-                    results.append(row_dict)
-
-                logger.info(f"Query returned {len(results)} rows")
-                return results
-
-            finally:
-                cursor.close()
-
+            return await loop.run_in_executor(
+                _executor,
+                self._execute_query_sync,
+                query,
+                parameters,
+            )
         except Exception as e:
             logger.error(f"Error executing query: {e}")
             raise

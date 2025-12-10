@@ -2,11 +2,17 @@
 from functools import lru_cache
 from typing import List
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # App
     APP_NAME: str = "Senture Orbit API"
@@ -29,11 +35,6 @@ class Settings(BaseSettings):
 
     # Redis (optional)
     REDIS_URL: str = "redis://localhost:6379"
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
 
 
 @lru_cache()
