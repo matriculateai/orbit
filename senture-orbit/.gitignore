@@ -38,9 +38,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Docker
-.docker/
-
 # Cache
 .cache/
 *.cache

@@ -17,11 +17,11 @@ Senture Orbit helps pharmaceutical companies analyze sales, stock levels, rep pe
 - **Frontend**: React 18, TypeScript, Ant Design, Recharts
 - **Database**: Databricks SQL Warehouse (Unity Catalog)
 - **AI**: Databricks Genie Conversation API (Public Preview - Dec 2025)
-- **Deployment**: Docker Compose
 
 ## Prerequisites
 
-- Docker and Docker Compose
+- Python 3.11+
+- Node.js 18+
 - Databricks workspace with:
   - SQL Warehouse
   - Unity Catalog with `pharma_gold` catalog
@@ -30,7 +30,7 @@ Senture Orbit helps pharmaceutical companies analyze sales, stock levels, rep pe
 
 ## Quick Start
 
-### 1. Clone and Configure
+### 1. Configure Environment
 
 ```bash
 cd senture-orbit
@@ -55,13 +55,37 @@ DATABRICKS_SCHEMA=gold
 GENIE_SPACE_ID=your-genie-space-id
 ```
 
-### 3. Start the Application
+### 3. Start the Backend
 
 ```bash
-docker-compose up --build
+cd backend
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Start the server
+uvicorn app.main:app --reload --port 8000
 ```
 
-### 4. Access the Application
+### 4. Start the Frontend
+
+Open a new terminal:
+
+```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Start the development server
+npm start
+```
+
+### 5. Access the Application
 
 - **Frontend**: http://localhost:3000
 - **Backend API**: http://localhost:8000
@@ -78,16 +102,13 @@ senture-orbit/
 │   │   ├── models/           # Pydantic models
 │   │   └── middleware/       # CORS, etc.
 │   ├── tests/                # pytest tests
-│   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
 │   │   ├── components/       # Reusable UI components
 │   │   ├── pages/            # Dashboard pages
 │   │   └── services/         # API client
-│   ├── Dockerfile
 │   └── package.json
-├── docker-compose.yml
 └── README.md
 ```
 
@@ -130,34 +151,19 @@ The application expects the following tables in Databricks:
 ### Materialized View
 - `gold.mv_kpi_dashboard` - Pre-aggregated KPIs
 
-## Development
+## Running Tests
 
-### Backend Development
+### Backend Tests
 
 ```bash
 cd backend
-python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
-
-### Frontend Development
-
-```bash
-cd frontend
-npm install
-npm start
-```
-
-### Running Tests
-
-```bash
-# Backend tests
-cd backend
 pytest tests/ -v
+```
 
-# Frontend tests
+### Frontend Tests
+
+```bash
 cd frontend
 npm test
 ```
@@ -190,14 +196,16 @@ Key implementation details:
    - Try simplifying the question
    - Check SQL Warehouse queue status
 
-### Logs
+4. **"CORS errors"**
+   - Ensure backend is running on port 8000
+   - Check CORS_ORIGINS in backend/.env includes http://localhost:3000
+
+### Viewing Logs
+
+Backend logs appear in the terminal where uvicorn is running. For more verbose output:
 
 ```bash
-# View backend logs
-docker-compose logs backend
-
-# View frontend logs
-docker-compose logs frontend
+uvicorn app.main:app --reload --log-level debug
 ```
 
 ## License
