@@ -234,7 +234,7 @@ const ManagerDashboard: React.FC = () => {
                   columns={opportunityColumns}
                   data={opportunities}
                   loading={isLoading}
-                  rowKey={(record) => `${record.customer_id}-${record.product_id}`}
+                  rowKey={(record) => `${record.product_code}-${record.customer_name}`}
                   showExport
                   exportFilename={`territory_opportunities_${selectedTerritory}`}
                   pagination={{ pageSize: 10 }}

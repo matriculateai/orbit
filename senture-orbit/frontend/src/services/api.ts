@@ -11,17 +11,18 @@ export interface KPIData {
 }
 
 export interface OpportunityData {
-  customer_id: string;
-  customer_name: string;
-  product_id: string;
+  product_code: string;
   product_name: string;
   brand?: string;
-  soh: number;
-  dsoh_days: number;
-  avg_sales?: number;
-  opportunity_value: number;
+  customer_name: string;
+  customer_group?: string;
   region?: string;
-  territory?: string;
+  soh: number;
+  avg_daily_units?: number;
+  dsoh_days: number;
+  ideal_stock_45d_units?: number;
+  opportunity_units?: number;
+  opportunity_value: number;
 }
 
 export interface RepPerformanceData {
@@ -220,7 +221,7 @@ class ApiClient {
   // Opportunities
   async getOpportunities(params: {
     limit?: number;
-    territory?: string;
+    region?: string;
     min_value?: number;
     max_dsoh?: number;
   } = {}): Promise<{ opportunities: OpportunityData[]; total_value: number; critical_count: number }> {
@@ -241,10 +242,10 @@ class ApiClient {
   async getPriorityOpportunities(
     persona: string = 'executive',
     limit: number = 10,
-    territory?: string
+    region?: string
   ): Promise<{ opportunities: OpportunityData[]; insights: string[] }> {
     const response = await this.client.get('/api/v1/opportunities/priority', {
-      params: { persona, limit, territory },
+      params: { persona, limit, region },
     });
     return response.data;
   }

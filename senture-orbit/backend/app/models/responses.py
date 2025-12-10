@@ -92,17 +92,18 @@ class KPIData(BaseModel):
 class OpportunityData(BaseModel):
     """Stock opportunity data."""
 
-    customer_id: str
-    customer_name: str
-    product_id: str
+    product_code: str
     product_name: str
     brand: Optional[str] = None
-    soh: float = Field(..., description="Stock on hand")
-    dsoh_days: float = Field(..., description="Days stock on hand")
-    avg_sales: Optional[float] = None
-    opportunity_value: float = Field(..., description="Calculated opportunity value")
+    customer_name: str
+    customer_group: Optional[str] = None
     region: Optional[str] = None
-    territory: Optional[str] = None
+    soh: float = Field(..., description="Stock on hand")
+    avg_daily_units: Optional[float] = None
+    dsoh_days: float = Field(..., description="Days stock on hand")
+    ideal_stock_45d_units: Optional[float] = None
+    opportunity_units: Optional[float] = None
+    opportunity_value: float = Field(..., description="Calculated opportunity value")
 
 
 class RepPerformanceData(BaseModel):

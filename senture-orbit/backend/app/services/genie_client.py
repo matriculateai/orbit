@@ -426,6 +426,8 @@ class GenieClient:
         Returns:
             Formatted response dictionary
         """
+        logger.debug(f"Formatting message response: {message}")
+
         message_id = message.get("id", "")
         status = message.get("status", "UNKNOWN")
         success = status == self.STATUS_COMPLETED
@@ -441,17 +443,26 @@ class GenieClient:
 
         # Parse attachments
         attachments = message.get("attachments", [])
+        logger.debug(f"Found {len(attachments)} attachments")
 
         for attachment in attachments:
-            attach_type = attachment.get("type", "")
+            attach_type = attachment.get("type", "").lower()
+            logger.debug(f"Processing attachment type: {attach_type}")
 
             if attach_type == "query":
                 # SQL query attachment
                 query_data = attachment.get("query", {})
                 sql_query = query_data.get("query")
+                # Also check for 'sql' key
+                if not sql_query:
+                    sql_query = query_data.get("sql")
                 thinking = query_data.get("thinking_steps", [])
                 if thinking:
                     thinking_steps.extend(thinking)
+                # Also check for description as thinking
+                description = query_data.get("description")
+                if description and description not in thinking_steps:
+                    thinking_steps.append(description)
 
             elif attach_type == "query_result":
                 # Query result data
@@ -460,11 +471,19 @@ class GenieClient:
                 rows = result_data.get("rows", [])
                 truncated = result_data.get("truncated", False)
 
+                # Also check for 'data' key
+                if not rows:
+                    rows = result_data.get("data", [])
+
                 # Convert rows to list of dicts
                 if columns and rows:
                     data = []
                     for row in rows:
                         row_dict = {}
+                        # Handle both array and dict row formats
+                        if isinstance(row, dict):
+                            data.append(row)
+                            continue
                         for i, col in enumerate(columns):
                             col_name = col.get("name", f"col_{i}") if isinstance(col, dict) else col
                             row_dict[col_name] = row[i] if i < len(row) else None
@@ -474,27 +493,62 @@ class GenieClient:
                         col.get("name", f"col_{i}") if isinstance(col, dict) else col
                         for i, col in enumerate(columns)
                     ]
+                    logger.debug(f"Parsed {len(data)} data rows with columns: {columns}")
 
             elif attach_type == "text":
-                # Text response
+                # Text response - check multiple possible locations
                 text_data = attachment.get("text", {})
-                text_content = text_data.get("content", "")
+                if isinstance(text_data, str):
+                    text_content = text_data
+                else:
+                    text_content = text_data.get("content", "")
+                    # Also try 'value' key
+                    if not text_content:
+                        text_content = text_data.get("value", "")
+                    # Also try 'text' key
+                    if not text_content:
+                        text_content = text_data.get("text", "")
+                logger.debug(f"Extracted text content: {text_content[:100] if text_content else 'empty'}...")
 
             elif attach_type == "visualization":
                 # Visualization config
                 visualization = attachment.get("visualization", {})
 
+        # Check for content directly on the message (some API versions)
+        if not text_content:
+            text_content = message.get("content", "")
+        if not text_content:
+            text_content = message.get("text", "")
+        if not text_content:
+            text_content = message.get("response", "")
+
+        # Check for reply in message (some API versions)
+        if not text_content:
+            reply = message.get("reply", {})
+            if isinstance(reply, str):
+                text_content = reply
+            elif isinstance(reply, dict):
+                text_content = reply.get("content", "") or reply.get("text", "")
+
         # Build response text
         response_text = text_content
         if not response_text and data:
             response_text = f"Found {len(data)} results."
+        if not response_text and sql_query:
+            response_text = "Query executed successfully."
         if not response_text and status == self.STATUS_FAILED:
             response_text = "I couldn't process that query. Please try rephrasing."
+        if not response_text and status == self.STATUS_COMPLETED:
+            response_text = "Query completed."
+
+        logger.info(f"Final response text: {response_text[:100] if response_text else 'empty'}...")
 
         # Handle errors
         error = None
         if status == self.STATUS_FAILED:
             error = message.get("error", {}).get("message", "Unknown error")
+            if not error:
+                error = message.get("error_message", "Unknown error")
             success = False
 
         return {

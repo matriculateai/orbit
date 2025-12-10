@@ -292,7 +292,7 @@ const RepDashboard: React.FC = () => {
                   columns={opportunityColumns}
                   data={allOpportunities}
                   loading={isLoading}
-                  rowKey={(record) => `${record.customer_id}-${record.product_id}`}
+                  rowKey={(record) => `${record.product_code}-${record.customer_name}`}
                   showExport
                   exportFilename={`my_opportunities_${repId}`}
                   pagination={{ pageSize: 10 }}

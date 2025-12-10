@@ -221,7 +221,7 @@ const ExecutiveDashboard: React.FC = () => {
               columns={opportunityColumns}
               data={opportunities}
               loading={isLoading}
-              rowKey="customer_id"
+              rowKey={(record) => `${record.product_code}-${record.customer_name}`}
               showExport
               exportFilename="top_opportunities"
               pagination={{ pageSize: 10 }}
