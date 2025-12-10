@@ -22,7 +22,7 @@ def get_databricks_service(
 @router.get("/")
 async def get_opportunities(
     limit: int = Query(default=20, ge=1, le=100, description="Maximum results"),
-    territory: Optional[str] = Query(None, description="Filter by territory"),
+    region: Optional[str] = Query(None, description="Filter by region"),
     min_value: Optional[float] = Query(None, description="Minimum opportunity value"),
     max_dsoh: Optional[int] = Query(
         default=45, description="Maximum days stock on hand"
@@ -39,8 +39,8 @@ async def get_opportunities(
         # Build filters
         filters = [f"dsoh_days < {max_dsoh}", "opportunity_value > 0"]
 
-        if territory:
-            filters.append(f"territory = '{territory}'")
+        if region:
+            filters.append(f"region = '{region}'")
 
         if min_value:
             filters.append(f"opportunity_value >= {min_value}")
@@ -49,17 +49,18 @@ async def get_opportunities(
 
         query = f"""
         SELECT
-            customer_id,
-            customer_name,
-            product_id,
+            product_code,
             product_name,
             brand,
-            soh,
-            dsoh_days,
-            avg_sales,
-            opportunity_value,
+            customer_name,
+            customer_group,
             region,
-            territory
+            soh,
+            avg_daily_units,
+            dsoh_days,
+            ideal_stock_45d_units,
+            opportunity_units,
+            opportunity_value
         FROM {settings.DATABRICKS_CATALOG}.{settings.DATABRICKS_SCHEMA}.mv_kpi_dashboard
         WHERE {where_clause}
         ORDER BY opportunity_value DESC
@@ -106,8 +107,8 @@ async def get_opportunities_summary(
             SUM(CASE WHEN dsoh_days >= 14 AND dsoh_days < 30 THEN 1 ELSE 0 END) as warning_count,
             SUM(CASE WHEN dsoh_days >= 30 AND dsoh_days < 45 THEN 1 ELSE 0 END) as moderate_count,
             AVG(dsoh_days) as avg_dsoh,
-            COUNT(DISTINCT customer_id) as affected_customers,
-            COUNT(DISTINCT product_id) as affected_products
+            COUNT(DISTINCT customer_name) as affected_customers,
+            COUNT(DISTINCT product_code) as affected_products
         FROM {settings.DATABRICKS_CATALOG}.{settings.DATABRICKS_SCHEMA}.mv_kpi_dashboard
         WHERE dsoh_days < 45 AND opportunity_value > 0
         """
@@ -218,9 +219,9 @@ async def get_opportunities_by_brand(
         )
 
 
-@router.get("/customer/{customer_id}")
+@router.get("/customer/{customer_name}")
 async def get_customer_opportunities(
-    customer_id: str,
+    customer_name: str,
     db: DatabricksService = Depends(get_databricks_service),
 ) -> Dict[str, Any]:
     """Get all opportunities for a specific customer."""
@@ -229,19 +230,20 @@ async def get_customer_opportunities(
 
         query = f"""
         SELECT
-            customer_id,
-            customer_name,
-            product_id,
+            product_code,
             product_name,
             brand,
-            soh,
-            dsoh_days,
-            avg_sales,
-            opportunity_value,
+            customer_name,
+            customer_group,
             region,
-            territory
+            soh,
+            avg_daily_units,
+            dsoh_days,
+            ideal_stock_45d_units,
+            opportunity_units,
+            opportunity_value
         FROM {settings.DATABRICKS_CATALOG}.{settings.DATABRICKS_SCHEMA}.mv_kpi_dashboard
-        WHERE customer_id = '{customer_id}'
+        WHERE customer_name = '{customer_name}'
             AND dsoh_days < 45
             AND opportunity_value > 0
         ORDER BY opportunity_value DESC
@@ -254,7 +256,7 @@ async def get_customer_opportunities(
 
         return {
             "success": True,
-            "customer_id": customer_id,
+            "customer_name": customer_name,
             "total_value": total_value,
             "opportunity_count": len(results),
             "opportunities": results,
@@ -277,17 +279,17 @@ async def get_priority_opportunities(
         regex="^(executive|manager|rep)$",
     ),
     limit: int = Query(default=10, ge=1, le=50),
-    territory: Optional[str] = Query(None),
+    region: Optional[str] = Query(None),
     db: DatabricksService = Depends(get_databricks_service),
 ) -> Dict[str, Any]:
     """Get prioritized opportunities based on persona.
 
     Executive: Highest value opportunities
-    Manager: Mix of critical and high-value in territory
+    Manager: Mix of critical and high-value in region
     Rep: Immediately actionable opportunities
     """
     try:
-        opportunities = await db.get_top_opportunities(limit=limit, territory=territory)
+        opportunities = await db.get_top_opportunities(limit=limit, region=region)
         db.close()
 
         # Apply persona-specific formatting and insights

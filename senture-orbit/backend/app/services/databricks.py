@@ -218,7 +218,7 @@ class DatabricksService:
         try:
             sales_results = await self.execute_query(query)
 
-            # Get opportunity data
+            # Get opportunity data from mv_kpi_dashboard
             opp_query = f"""
             SELECT
                 COUNT(*) as critical_gaps,
@@ -290,36 +290,38 @@ class DatabricksService:
     async def get_top_opportunities(
         self,
         limit: int = 10,
-        territory: Optional[str] = None,
+        region: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Get top stock opportunities.
+        """Get top stock opportunities from mv_kpi_dashboard.
 
         Args:
             limit: Maximum number of opportunities to return
-            territory: Optional territory filter
+            region: Optional region filter
 
         Returns:
             List of opportunity dictionaries
         """
-        territory_filter = f"AND territory = '{territory}'" if territory else ""
+        region_filter = f"AND region = '{region}'" if region else ""
 
+        # Using actual mv_kpi_dashboard columns
         query = f"""
         SELECT
-            customer_id,
-            customer_name,
-            product_id,
+            product_code,
             product_name,
             brand,
-            soh,
-            dsoh_days,
-            avg_sales,
-            opportunity_value,
+            customer_name,
+            customer_group,
             region,
-            territory
+            soh,
+            avg_daily_units,
+            dsoh_days,
+            ideal_stock_45d_units,
+            opportunity_units,
+            opportunity_value
         FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.mv_kpi_dashboard
         WHERE dsoh_days < 45
             AND opportunity_value > 0
-            {territory_filter}
+            {region_filter}
         ORDER BY opportunity_value DESC
         LIMIT {limit}
         """
@@ -337,8 +339,11 @@ class DatabricksService:
     ) -> Dict[str, Any]:
         """Get territory-specific data for manager dashboard.
 
+        Note: territory_id corresponds to dim_rep.territory, which is used
+        to filter reps. For customer/product data, we use region from dim_customer.
+
         Args:
-            territory_id: Territory identifier
+            territory_id: Territory identifier (from dim_rep)
             date_range: Time range for filtering
 
         Returns:
@@ -346,51 +351,66 @@ class DatabricksService:
         """
         date_filter = self.get_date_filter(date_range)
 
-        # Product performance query
-        product_query = f"""
-        SELECT
-            p.product_id,
-            p.product_name,
-            p.brand,
-            SUM(s.secondary_value) as total_sales,
-            SUM(s.delivered_qty) as units_sold,
-            COUNT(DISTINCT s.customer_id) as customer_count
-        FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.fact_secondary_sales_daily s
-        JOIN {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_product p
-            ON s.product_id = p.product_id
-        JOIN {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_customer c
-            ON s.customer_id = c.customer_id
-        WHERE c.territory = '{territory_id}' AND {date_filter}
-        GROUP BY p.product_id, p.product_name, p.brand
-        ORDER BY total_sales DESC
-        LIMIT 10
-        """
-
-        # Rep performance query
-        rep_query = f"""
-        SELECT
-            r.rep_id,
-            r.rep_name,
-            a.coverage_percent,
-            a.strike_rate,
-            a.total_calls,
-            r.territory,
-            r.region
-        FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.fact_rep_activity_monthly a
-        JOIN {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_rep r
-            ON a.rep_id = r.rep_id
-        WHERE r.territory = '{territory_id}'
-            AND a.yyyymm = DATE_FORMAT(CURRENT_DATE - INTERVAL 1 MONTH, 'yyyyMM')
-        ORDER BY a.strike_rate DESC
+        # Get the region for this territory from dim_rep
+        region_query = f"""
+        SELECT DISTINCT region
+        FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_rep
+        WHERE territory = '{territory_id}'
+        LIMIT 1
         """
 
         try:
-            products = await self.execute_query(product_query)
+            region_results = await self.execute_query(region_query)
+            region = region_results[0]["region"] if region_results else None
+
+            # Product performance query - using region from dim_customer
+            product_query = f"""
+            SELECT
+                p.product_id,
+                p.product_code,
+                p.product_name,
+                p.brand,
+                SUM(s.secondary_value) as total_sales,
+                SUM(s.delivered_qty) as units_sold,
+                COUNT(DISTINCT s.customer_id) as customer_count
+            FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.fact_secondary_sales_daily s
+            JOIN {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_product p
+                ON s.product_id = p.product_id
+            JOIN {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_customer c
+                ON s.customer_id = c.customer_id
+            WHERE c.region = '{region}' AND {date_filter}
+            GROUP BY p.product_id, p.product_code, p.product_name, p.brand
+            ORDER BY total_sales DESC
+            LIMIT 10
+            """ if region else None
+
+            # Rep performance query - filter by territory
+            rep_query = f"""
+            SELECT
+                r.rep_id,
+                r.rep_name,
+                r.rep_code,
+                a.coverage_percent,
+                a.strike_rate,
+                a.total_calls,
+                a.productive_calls,
+                r.territory,
+                r.region
+            FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.fact_rep_activity_monthly a
+            JOIN {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_rep r
+                ON a.rep_id = r.rep_id
+            WHERE r.territory = '{territory_id}'
+                AND a.yyyymm = DATE_FORMAT(CURRENT_DATE - INTERVAL 1 MONTH, 'yyyyMM')
+            ORDER BY a.strike_rate DESC
+            """
+
+            products = await self.execute_query(product_query) if product_query else []
             reps = await self.execute_query(rep_query)
-            opportunities = await self.get_top_opportunities(limit=20, territory=territory_id)
+            opportunities = await self.get_top_opportunities(limit=20, region=region)
 
             return {
                 "territory_id": territory_id,
+                "region": region,
                 "product_performance": products,
                 "rep_performance": reps,
                 "opportunities": opportunities,
@@ -418,9 +438,12 @@ class DatabricksService:
         SELECT
             r.rep_id,
             r.rep_name,
+            r.rep_code,
             a.coverage_percent,
             a.strike_rate,
             a.total_calls,
+            a.productive_calls,
+            a.customers_seen,
             r.territory,
             r.region
         FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.fact_rep_activity_monthly a
@@ -430,9 +453,9 @@ class DatabricksService:
             AND a.yyyymm = DATE_FORMAT(CURRENT_DATE - INTERVAL 1 MONTH, 'yyyyMM')
         """
 
-        # Get rep's territory for opportunities
-        territory_query = f"""
-        SELECT territory FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_rep
+        # Get rep's region for opportunities
+        region_query = f"""
+        SELECT region FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_rep
         WHERE rep_id = '{rep_id}'
         """
 
@@ -440,12 +463,12 @@ class DatabricksService:
             perf_results = await self.execute_query(perf_query)
             my_performance = perf_results[0] if perf_results else None
 
-            territory_results = await self.execute_query(territory_query)
-            territory = territory_results[0]["territory"] if territory_results else None
+            region_results = await self.execute_query(region_query)
+            region = region_results[0]["region"] if region_results else None
 
             opportunities = []
-            if territory:
-                opportunities = await self.get_top_opportunities(limit=limit, territory=territory)
+            if region:
+                opportunities = await self.get_top_opportunities(limit=limit, region=region)
 
             # Priority opportunities (top 5 by value)
             priority = opportunities[:5] if opportunities else []
