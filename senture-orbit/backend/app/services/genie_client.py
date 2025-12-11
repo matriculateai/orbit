@@ -306,6 +306,8 @@ class GenieClient:
         According to API docs, query results must be fetched separately using
         the attachment_id from the query attachment.
 
+        Endpoint: GET /api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/query-result
+
         Args:
             conversation_id: The conversation ID
             message_id: The message ID
@@ -320,7 +322,7 @@ class GenieClient:
         try:
             url = (
                 f"{self.BASE_PATH}/spaces/{space_id}/conversations/{conversation_id}"
-                f"/messages/{message_id}/query-result/{attachment_id}"
+                f"/messages/{message_id}/attachments/{attachment_id}/query-result"
             )
             logger.info(f"Fetching query results from: {url}")
             response = await self.client.get(url)
