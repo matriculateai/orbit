@@ -292,6 +292,45 @@ class GenieClient:
             logger.error(f"Error deleting message: {e}")
             return False
 
+    # ==================== Query Results ====================
+
+    async def get_query_result(
+        self,
+        conversation_id: str,
+        message_id: str,
+        attachment_id: str,
+        space_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get query results for a specific attachment.
+
+        According to API docs, query results must be fetched separately using
+        the attachment_id from the query attachment.
+
+        Args:
+            conversation_id: The conversation ID
+            message_id: The message ID
+            attachment_id: The attachment ID from the query attachment
+            space_id: Optional space ID
+
+        Returns:
+            Query result data with columns and rows
+        """
+        space_id = space_id or self.space_id
+
+        try:
+            url = (
+                f"{self.BASE_PATH}/spaces/{space_id}/conversations/{conversation_id}"
+                f"/messages/{message_id}/query-result/{attachment_id}"
+            )
+            logger.info(f"Fetching query results from: {url}")
+            response = await self.client.get(url)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Error getting query result: {e}")
+            # Return empty result instead of raising
+            return {"columns": [], "rows": [], "truncated": False}
+
     # ==================== Polling & Completion ====================
 
     async def wait_for_completion(
@@ -358,7 +397,8 @@ class GenieClient:
         This is the main method for interacting with Genie. It:
         1. Starts a new conversation or continues existing one
         2. Polls for completion
-        3. Formats the response
+        3. Fetches query results from attachments
+        4. Formats the response
 
         Args:
             question: The question to ask Genie
@@ -372,23 +412,29 @@ class GenieClient:
             if conversation_id:
                 response = await self.create_message(conversation_id, question)
                 conv_id = conversation_id
+                message_id = response.get("message_id")
             else:
                 response = await self.start_conversation(question)
-                conv_id = response.get("conversation_id")
-
-            message_id = response.get("message_id")
+                # Response structure: { "conversation": {...}, "message": {...} }
+                conv_data = response.get("conversation", {})
+                msg_data = response.get("message", {})
+                conv_id = conv_data.get("id") or response.get("conversation_id")
+                message_id = msg_data.get("id") or response.get("message_id")
 
             if not conv_id or not message_id:
+                logger.error(f"Response missing IDs: {response}")
                 raise ValueError("Missing conversation_id or message_id in response")
+
+            logger.info(f"Started conversation {conv_id}, message {message_id}")
 
             # Wait for completion
             completed_message = await self.wait_for_completion(conv_id, message_id)
 
-            # Format and return response
-            return self.format_response(completed_message, conv_id)
+            # Format and return response (this will also fetch query results)
+            return await self.format_response(completed_message, conv_id, message_id)
 
         except Exception as e:
-            logger.error(f"Error querying Genie: {e}")
+            logger.error(f"Error querying Genie: {e}", exc_info=True)
             return {
                 "conversation_id": conversation_id or "",
                 "message_id": "",
@@ -406,29 +452,31 @@ class GenieClient:
 
     # ==================== Response Formatting ====================
 
-    def format_response(
+    async def format_response(
         self,
         message: Dict[str, Any],
         conversation_id: str,
+        message_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Parse and format a Genie message response.
 
         Extracts:
         - SQL queries from query attachments
-        - Data from query_result attachments
+        - Data by fetching from query-result endpoint using attachment_id
         - Text from text attachments
         - Thinking steps for transparency
 
         Args:
             message: Raw message response from API
             conversation_id: The conversation ID
+            message_id: The message ID (for fetching query results)
 
         Returns:
             Formatted response dictionary
         """
-        logger.debug(f"Formatting message response: {message}")
+        logger.info(f"Formatting message response. Keys: {list(message.keys())}")
 
-        message_id = message.get("id", "")
+        msg_id = message_id or message.get("id", "")
         status = message.get("status", "UNKNOWN")
         success = status == self.STATUS_COMPLETED
 
@@ -440,95 +488,106 @@ class GenieClient:
         visualization = None
         thinking_steps = []
         truncated = False
+        query_attachment_id = None
 
         # Parse attachments
-        attachments = message.get("attachments", [])
-        logger.debug(f"Found {len(attachments)} attachments")
+        attachments = message.get("attachments") or []
+        logger.info(f"Found {len(attachments)} attachments")
 
         for attachment in attachments:
-            attach_type = attachment.get("type", "").lower()
-            logger.debug(f"Processing attachment type: {attach_type}")
+            attach_type = attachment.get("type", "")
+            logger.info(f"Processing attachment: type={attach_type}, keys={list(attachment.keys())}")
 
+            # Handle query attachment (contains SQL and attachment_id for results)
             if attach_type == "query":
-                # SQL query attachment
                 query_data = attachment.get("query", {})
                 sql_query = query_data.get("query")
-                # Also check for 'sql' key
                 if not sql_query:
                     sql_query = query_data.get("sql")
+
+                # Get attachment_id for fetching results
+                query_attachment_id = attachment.get("attachment_id")
+                logger.info(f"Found query attachment_id: {query_attachment_id}")
+
+                # Extract thinking steps
                 thinking = query_data.get("thinking_steps", [])
                 if thinking:
                     thinking_steps.extend(thinking)
-                # Also check for description as thinking
                 description = query_data.get("description")
                 if description and description not in thinking_steps:
                     thinking_steps.append(description)
 
-            elif attach_type == "query_result":
-                # Query result data
-                result_data = attachment.get("query_result", {})
-                columns = result_data.get("columns", [])
-                rows = result_data.get("rows", [])
-                truncated = result_data.get("truncated", False)
-
-                # Also check for 'data' key
-                if not rows:
-                    rows = result_data.get("data", [])
-
-                # Convert rows to list of dicts
-                if columns and rows:
-                    data = []
-                    for row in rows:
-                        row_dict = {}
-                        # Handle both array and dict row formats
-                        if isinstance(row, dict):
-                            data.append(row)
-                            continue
-                        for i, col in enumerate(columns):
-                            col_name = col.get("name", f"col_{i}") if isinstance(col, dict) else col
-                            row_dict[col_name] = row[i] if i < len(row) else None
-                        data.append(row_dict)
-                    # Extract just column names
-                    columns = [
-                        col.get("name", f"col_{i}") if isinstance(col, dict) else col
-                        for i, col in enumerate(columns)
-                    ]
-                    logger.debug(f"Parsed {len(data)} data rows with columns: {columns}")
-
+            # Handle text attachment
             elif attach_type == "text":
-                # Text response - check multiple possible locations
                 text_data = attachment.get("text", {})
                 if isinstance(text_data, str):
                     text_content = text_data
                 else:
-                    text_content = text_data.get("content", "")
-                    # Also try 'value' key
-                    if not text_content:
-                        text_content = text_data.get("value", "")
-                    # Also try 'text' key
-                    if not text_content:
-                        text_content = text_data.get("text", "")
-                logger.debug(f"Extracted text content: {text_content[:100] if text_content else 'empty'}...")
+                    text_content = (
+                        text_data.get("content", "") or
+                        text_data.get("value", "") or
+                        text_data.get("text", "")
+                    )
+                logger.info(f"Extracted text: {text_content[:200] if text_content else 'empty'}...")
 
+            # Handle visualization attachment
             elif attach_type == "visualization":
-                # Visualization config
                 visualization = attachment.get("visualization", {})
 
-        # Check for content directly on the message (some API versions)
-        if not text_content:
-            text_content = message.get("content", "")
-        if not text_content:
-            text_content = message.get("text", "")
-        if not text_content:
-            text_content = message.get("response", "")
+        # Fetch query results if we have an attachment_id
+        if query_attachment_id and msg_id:
+            logger.info(f"Fetching query results for attachment {query_attachment_id}")
+            try:
+                result = await self.get_query_result(
+                    conversation_id, msg_id, query_attachment_id
+                )
+                logger.info(f"Query result keys: {list(result.keys())}")
 
-        # Check for reply in message (some API versions)
-        if not text_content:
-            reply = message.get("reply", {})
-            if isinstance(reply, str):
-                text_content = reply
-            elif isinstance(reply, dict):
-                text_content = reply.get("content", "") or reply.get("text", "")
+                # Parse columns
+                raw_columns = result.get("columns", [])
+                columns = []
+                for i, col in enumerate(raw_columns):
+                    if isinstance(col, dict):
+                        columns.append(col.get("name", f"col_{i}"))
+                    else:
+                        columns.append(str(col))
+
+                # Parse rows
+                rows = result.get("rows", []) or result.get("data", [])
+                truncated = result.get("truncated", False)
+
+                if columns and rows:
+                    data = []
+                    for row in rows:
+                        if isinstance(row, dict):
+                            data.append(row)
+                        elif isinstance(row, (list, tuple)):
+                            row_dict = {}
+                            for i, col_name in enumerate(columns):
+                                row_dict[col_name] = row[i] if i < len(row) else None
+                            data.append(row_dict)
+                    logger.info(f"Parsed {len(data)} data rows with columns: {columns}")
+
+            except Exception as e:
+                logger.error(f"Failed to fetch query results: {e}")
+
+        # Check for query_result directly on message (some API versions)
+        if not data and message.get("query_result"):
+            qr = message.get("query_result", {})
+            raw_columns = qr.get("columns", [])
+            columns = [
+                col.get("name", f"col_{i}") if isinstance(col, dict) else str(col)
+                for i, col in enumerate(raw_columns)
+            ]
+            rows = qr.get("rows", [])
+            if columns and rows:
+                data = []
+                for row in rows:
+                    if isinstance(row, dict):
+                        data.append(row)
+                    else:
+                        row_dict = {columns[i]: row[i] if i < len(row) else None for i in range(len(columns))}
+                        data.append(row_dict)
 
         # Build response text
         response_text = text_content
@@ -537,23 +596,30 @@ class GenieClient:
         if not response_text and sql_query:
             response_text = "Query executed successfully."
         if not response_text and status == self.STATUS_FAILED:
-            response_text = "I couldn't process that query. Please try rephrasing."
+            error_info = message.get("error", {})
+            if isinstance(error_info, dict):
+                response_text = error_info.get("message", "I couldn't process that query. Please try rephrasing.")
+            else:
+                response_text = "I couldn't process that query. Please try rephrasing."
         if not response_text and status == self.STATUS_COMPLETED:
-            response_text = "Query completed."
+            response_text = "Query completed successfully."
 
-        logger.info(f"Final response text: {response_text[:100] if response_text else 'empty'}...")
+        logger.info(f"Final response: text={response_text[:100] if response_text else 'empty'}..., "
+                   f"sql={bool(sql_query)}, data_rows={len(data) if data else 0}")
 
         # Handle errors
         error = None
         if status == self.STATUS_FAILED:
-            error = message.get("error", {}).get("message", "Unknown error")
-            if not error:
-                error = message.get("error_message", "Unknown error")
+            error_info = message.get("error", {})
+            if isinstance(error_info, dict):
+                error = error_info.get("message", "Unknown error")
+            else:
+                error = str(error_info) if error_info else "Unknown error"
             success = False
 
         return {
             "conversation_id": conversation_id,
-            "message_id": message_id,
+            "message_id": msg_id,
             "response": response_text,
             "sql_query": sql_query,
             "data": data,
@@ -607,7 +673,8 @@ class GenieClient:
 
         formatted = []
         for msg in messages:
-            formatted_msg = self.format_response(msg, conversation_id)
+            msg_id = msg.get("id", "")
+            formatted_msg = await self.format_response(msg, conversation_id, msg_id)
             formatted_msg["role"] = "user" if msg.get("role") == "USER" else "assistant"
             formatted.append(formatted_msg)
 
