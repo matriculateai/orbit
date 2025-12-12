@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     GENIE_ENABLED: bool = True
     GENIE_SPACE_ID: str = ""
 
+    # Claude AI (Anthropic)
+    ANTHROPIC_API_KEY: str = ""
+    CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
+    CLAUDE_MAX_TOKENS: int = 4096
+
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
 

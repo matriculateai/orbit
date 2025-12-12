@@ -102,7 +102,9 @@ const GenieChat: React.FC<GenieChatProps> = ({
     try {
       const response: GenieResponse = await api.sendGenieMessage(
         question,
-        conversationId || undefined
+        conversationId || undefined,
+        persona,
+        true // use AI orchestration
       );
 
       if (!conversationId && response.conversation_id) {

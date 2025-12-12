@@ -253,13 +253,17 @@ class ApiClient {
   // Genie Chat
   async sendGenieMessage(
     question: string,
-    conversationId?: string
+    conversationId?: string,
+    persona: 'executive' | 'manager' | 'rep' = 'executive',
+    useAiOrchestration: boolean = true
   ): Promise<GenieResponse> {
     const response: AxiosResponse<GenieResponse> = await this.client.post(
       '/api/v1/genie/query',
       {
         question,
         conversation_id: conversationId,
+        persona,
+        use_ai_orchestration: useAiOrchestration,
       }
     );
     return response.data;

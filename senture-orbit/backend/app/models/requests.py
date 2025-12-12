@@ -17,6 +17,14 @@ class GenieQueryRequest(BaseModel):
         None,
         description="Existing conversation ID for follow-up questions",
     )
+    persona: Literal["executive", "manager", "rep"] = Field(
+        default="executive",
+        description="User persona for tailored responses",
+    )
+    use_ai_orchestration: bool = Field(
+        default=True,
+        description="Use Claude AI for question decomposition and interpretation",
+    )
 
 
 class RegenerateRequest(BaseModel):

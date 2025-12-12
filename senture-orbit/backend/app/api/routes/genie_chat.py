@@ -1,4 +1,8 @@
-"""Genie Chat API endpoints."""
+"""Genie Chat API endpoints with AI orchestration.
+
+This module provides endpoints for interacting with Databricks Genie,
+enhanced with Claude AI for question decomposition and response interpretation.
+"""
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -8,6 +12,7 @@ from app.config import Settings, get_settings
 from app.models.requests import GenieQueryRequest
 from app.models.responses import ConversationHistoryResponse, GenieResponse
 from app.services.genie_client import GenieClient
+from app.services.ai_orchestrator import AIOrchestrator
 from app.services.persona_formatter import PersonaFormatter
 
 router = APIRouter()
@@ -32,58 +37,108 @@ async def get_genie_client(
 @router.post("/query", response_model=GenieResponse)
 async def query_genie(
     request: GenieQueryRequest,
-    genie: GenieClient = Depends(get_genie_client),
+    settings: Settings = Depends(get_settings),
 ) -> GenieResponse:
-    """Send a question to Genie and get a response.
+    """Send a question and get an AI-orchestrated response.
 
-    This endpoint:
-    1. Starts a new conversation or continues existing one
-    2. Polls for completion using exponential backoff
-    3. Returns formatted response with SQL, data, and text
+    This endpoint uses Claude AI to:
+    1. Decompose complex questions into data sub-questions
+    2. Get SQL from Genie for each sub-question
+    3. Execute queries and gather results
+    4. Generate persona-tailored interpretation
+
+    If Claude is not configured, falls back to direct Genie queries.
 
     Args:
-        request: Query request with question and optional conversation_id
+        request: Query request with question, persona, and options
 
     Returns:
-        GenieResponse with all response components
+        GenieResponse with interpretation, SQL, and data
     """
+    orchestrator = None
+    genie = None
+
     try:
-        logger.info(f"Genie query: {request.question[:100]}...")
+        logger.info(f"Query for persona '{request.persona}': {request.question[:100]}...")
 
-        result = await genie.query(
-            question=request.question,
-            conversation_id=request.conversation_id,
-        )
+        # Use AI orchestration if Claude is configured and requested
+        if settings.ANTHROPIC_API_KEY and request.use_ai_orchestration:
+            logger.info("Using AI orchestration with Claude")
+            orchestrator = AIOrchestrator(settings)
 
-        await genie.close()
+            result = await orchestrator.process_question(
+                question=request.question,
+                persona=request.persona,
+                conversation_id=request.conversation_id,
+            )
 
-        return GenieResponse(
-            conversation_id=result["conversation_id"],
-            message_id=result["message_id"],
-            response=result["response"],
-            sql_query=result.get("sql_query"),
-            data=result.get("data"),
-            columns=result.get("columns"),
-            visualization=result.get("visualization"),
-            thinking_steps=result.get("thinking_steps"),
-            status=result["status"],
-            success=result["success"],
-            error=result.get("error"),
-            truncated=result.get("truncated", False),
-        )
+            await orchestrator.close()
+
+            # Handle multiple SQL queries from sub-questions
+            sql_query = None
+            if result.get("sql_queries"):
+                sql_query = "\n\n-- Sub-query --\n".join(result["sql_queries"])
+
+            return GenieResponse(
+                conversation_id=result.get("conversation_id", ""),
+                message_id=result.get("message_id", ""),
+                response=result["response"],
+                sql_query=sql_query,
+                data=result.get("data"),
+                columns=result.get("columns"),
+                visualization=result.get("visualization"),
+                thinking_steps=result.get("thinking_steps"),
+                status=result.get("status", "COMPLETED"),
+                success=result.get("success", True),
+                error=result.get("error"),
+                truncated=result.get("truncated", False),
+            )
+
+        else:
+            # Fall back to direct Genie query
+            logger.info("Using direct Genie query (Claude not configured)")
+            genie = GenieClient(settings)
+
+            result = await genie.query(
+                question=request.question,
+                conversation_id=request.conversation_id,
+            )
+
+            await genie.close()
+
+            return GenieResponse(
+                conversation_id=result["conversation_id"],
+                message_id=result["message_id"],
+                response=result["response"],
+                sql_query=result.get("sql_query"),
+                data=result.get("data"),
+                columns=result.get("columns"),
+                visualization=result.get("visualization"),
+                thinking_steps=result.get("thinking_steps"),
+                status=result["status"],
+                success=result["success"],
+                error=result.get("error"),
+                truncated=result.get("truncated", False),
+            )
 
     except HTTPException:
         raise
     except TimeoutError as e:
-        logger.error(f"Genie query timeout: {e}")
-        await genie.close()
+        logger.error(f"Query timeout: {e}")
+        if orchestrator:
+            await orchestrator.close()
+        if genie:
+            await genie.close()
         raise HTTPException(
             status_code=504,
             detail="Query timed out. Please try a simpler question.",
         )
     except Exception as e:
-        logger.error(f"Genie query error: {e}")
-        await genie.close()
+        logger.error(f"Query error: {e}", exc_info=True)
+        if orchestrator:
+            await orchestrator.close()
+        if genie:
+            await genie.close()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to process query: {str(e)}",
