@@ -498,18 +498,29 @@ class GenieClient:
 
         for attachment in attachments:
             attach_type = attachment.get("type", "")
-            logger.info(f"Processing attachment: type={attach_type}, keys={list(attachment.keys())}")
+            attach_keys = list(attachment.keys())
+            logger.info(f"Processing attachment: type={attach_type}, keys={attach_keys}")
 
-            # Handle query attachment (contains SQL and attachment_id for results)
-            if attach_type == "query":
+            # Handle query attachment - check both type field AND presence of 'query' key
+            # (API sometimes has empty type but has 'query' key directly)
+            if attach_type == "query" or "query" in attachment:
                 query_data = attachment.get("query", {})
+                logger.info(f"Query data structure: {query_data}")
+
+                # Try multiple possible locations for SQL
                 sql_query = query_data.get("query")
                 if not sql_query:
                     sql_query = query_data.get("sql")
+                if not sql_query:
+                    sql_query = query_data.get("statement")
+                if not sql_query:
+                    # Check if query_data itself is the SQL string
+                    if isinstance(query_data, str):
+                        sql_query = query_data
 
                 # Get attachment_id for fetching results
                 query_attachment_id = attachment.get("attachment_id")
-                logger.info(f"Found query attachment_id: {query_attachment_id}")
+                logger.info(f"Found query: sql={sql_query[:100] if sql_query else None}..., attachment_id={query_attachment_id}")
 
                 # Extract thinking steps
                 thinking = query_data.get("thinking_steps", [])
@@ -519,21 +530,25 @@ class GenieClient:
                 if description and description not in thinking_steps:
                     thinking_steps.append(description)
 
-            # Handle text attachment
-            elif attach_type == "text":
+            # Handle text attachment - check both type field AND presence of 'text' key
+            # Skip if this attachment also has 'query' (already processed above)
+            if (attach_type == "text" or "text" in attachment) and "query" not in attachment:
                 text_data = attachment.get("text", {})
+                logger.info(f"Text data structure: {text_data}")
+
                 if isinstance(text_data, str):
                     text_content = text_data
                 else:
                     text_content = (
                         text_data.get("content", "") or
                         text_data.get("value", "") or
-                        text_data.get("text", "")
+                        text_data.get("text", "") or
+                        text_data.get("body", "")
                     )
                 logger.info(f"Extracted text: {text_content[:200] if text_content else 'empty'}...")
 
             # Handle visualization attachment
-            elif attach_type == "visualization":
+            if (attach_type == "visualization" or "visualization" in attachment) and "query" not in attachment and "text" not in attachment:
                 visualization = attachment.get("visualization", {})
 
         # Fetch query results if we have an attachment_id
