@@ -226,7 +226,7 @@ Focus on:
 class AIOrchestrator:
     """Orchestrates AI-powered query processing using Claude and Genie."""
 
-    MAX_SUB_QUESTIONS = 3
+    MAX_SUB_QUESTIONS = 5
 
     def __init__(self, settings: Settings):
         """Initialize the orchestrator.
@@ -272,22 +272,36 @@ class AIOrchestrator:
             sub_questions = await self._generate_sub_questions(question)
             logger.info(f"Generated {len(sub_questions)} sub-questions")
 
-            # Step 2: Get SQL from Genie for each sub-question
-            genie_results = []
-            for i, sub_q in enumerate(sub_questions):
-                logger.info(f"Processing sub-question {i+1}: {sub_q[:50]}...")
-                result = await self._get_genie_response(sub_q, conversation_id)
-                genie_results.append({
+            # Step 2: Get SQL from Genie for all sub-questions in parallel
+            logger.info(f"Sending {len(sub_questions)} sub-questions to Genie in parallel...")
+
+            async def process_sub_question(idx: int, sub_q: str) -> Dict[str, Any]:
+                """Process a single sub-question and return formatted result."""
+                logger.info(f"Processing sub-question {idx+1}: {sub_q[:50]}...")
+                result = await self._get_genie_response(sub_q, None)  # Each gets its own conversation
+                return {
                     "sub_question": sub_q,
                     "sql_query": result.get("sql_query"),
                     "data": result.get("data"),
                     "columns": result.get("columns"),
                     "success": result.get("success", False),
                     "error": result.get("error"),
-                })
-                # Use the conversation ID from first response for subsequent queries
-                if not conversation_id and result.get("conversation_id"):
+                    "conversation_id": result.get("conversation_id"),
+                }
+
+            # Run all Genie queries in parallel
+            genie_results = await asyncio.gather(
+                *[process_sub_question(i, q) for i, q in enumerate(sub_questions)]
+            )
+            genie_results = list(genie_results)
+
+            # Get a conversation ID from any successful result
+            for result in genie_results:
+                if result.get("conversation_id"):
                     conversation_id = result.get("conversation_id")
+                    break
+
+            logger.info(f"Completed {len(genie_results)} parallel Genie queries")
 
             # Step 3: Generate interpretation with Claude
             interpretation = await self._generate_interpretation(
@@ -342,7 +356,7 @@ class AIOrchestrator:
             question: The user's business question
 
         Returns:
-            List of data sub-questions (max 3)
+            List of data sub-questions (max 5)
         """
         prompt = f"""You are a pharmaceutical data analyst. Given a business question, break it down into specific data queries that can be answered using SQL against a database.
 
