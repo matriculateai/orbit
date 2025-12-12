@@ -560,30 +560,69 @@ class GenieClient:
                 )
                 logger.info(f"Query result keys: {list(result.keys())}")
 
-                # Parse columns
-                raw_columns = result.get("columns", [])
-                columns = []
-                for i, col in enumerate(raw_columns):
-                    if isinstance(col, dict):
-                        columns.append(col.get("name", f"col_{i}"))
-                    else:
-                        columns.append(str(col))
+                # Handle statement_response wrapper (Databricks SQL execution format)
+                if "statement_response" in result:
+                    stmt_response = result["statement_response"]
+                    logger.info(f"statement_response keys: {list(stmt_response.keys())}")
 
-                # Parse rows
-                rows = result.get("rows", []) or result.get("data", [])
-                truncated = result.get("truncated", False)
+                    # Get columns from manifest.schema.columns
+                    manifest = stmt_response.get("manifest", {})
+                    schema = manifest.get("schema", {})
+                    raw_columns = schema.get("columns", [])
+                    logger.info(f"Found {len(raw_columns)} columns in manifest.schema")
 
-                if columns and rows:
-                    data = []
-                    for row in rows:
-                        if isinstance(row, dict):
-                            data.append(row)
-                        elif isinstance(row, (list, tuple)):
-                            row_dict = {}
-                            for i, col_name in enumerate(columns):
-                                row_dict[col_name] = row[i] if i < len(row) else None
-                            data.append(row_dict)
-                    logger.info(f"Parsed {len(data)} data rows with columns: {columns}")
+                    columns = []
+                    for i, col in enumerate(raw_columns):
+                        if isinstance(col, dict):
+                            col_name = col.get("name", f"col_{i}")
+                            columns.append(col_name)
+                        else:
+                            columns.append(str(col))
+
+                    # Get rows from result.data_array
+                    result_data = stmt_response.get("result", {})
+                    rows = result_data.get("data_array", [])
+                    logger.info(f"Found {len(rows)} rows in result.data_array")
+
+                    # Check truncation status
+                    truncated = stmt_response.get("truncated", False)
+
+                    if columns and rows:
+                        data = []
+                        for row in rows:
+                            if isinstance(row, dict):
+                                data.append(row)
+                            elif isinstance(row, (list, tuple)):
+                                row_dict = {}
+                                for i, col_name in enumerate(columns):
+                                    row_dict[col_name] = row[i] if i < len(row) else None
+                                data.append(row_dict)
+                        logger.info(f"Parsed {len(data)} data rows with columns: {columns}")
+                else:
+                    # Fallback: try direct columns/rows structure
+                    raw_columns = result.get("columns", [])
+                    columns = []
+                    for i, col in enumerate(raw_columns):
+                        if isinstance(col, dict):
+                            columns.append(col.get("name", f"col_{i}"))
+                        else:
+                            columns.append(str(col))
+
+                    # Parse rows
+                    rows = result.get("rows", []) or result.get("data", [])
+                    truncated = result.get("truncated", False)
+
+                    if columns and rows:
+                        data = []
+                        for row in rows:
+                            if isinstance(row, dict):
+                                data.append(row)
+                            elif isinstance(row, (list, tuple)):
+                                row_dict = {}
+                                for i, col_name in enumerate(columns):
+                                    row_dict[col_name] = row[i] if i < len(row) else None
+                                data.append(row_dict)
+                        logger.info(f"Parsed {len(data)} data rows with columns: {columns}")
 
             except Exception as e:
                 logger.error(f"Failed to fetch query results: {e}")
