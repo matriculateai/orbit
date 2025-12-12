@@ -297,6 +297,8 @@ class AIOrchestrator:
             )
 
             # Compile the final response
+            all_data_sets = self._get_all_data_sets(genie_results)
+
             return {
                 "conversation_id": conversation_id,
                 "message_id": "",
@@ -306,6 +308,7 @@ class AIOrchestrator:
                 "sql_queries": [r["sql_query"] for r in genie_results if r["sql_query"]],
                 "data": self._merge_data_results(genie_results),
                 "columns": self._get_all_columns(genie_results),
+                "all_data_sets": all_data_sets,  # All query results
                 "visualization": None,
                 "thinking_steps": [r["sub_question"] for r in genie_results],
                 "status": "COMPLETED",
@@ -530,32 +533,65 @@ Response:"""
     ) -> Optional[List[Dict[str, Any]]]:
         """Merge data from all sub-question results.
 
-        Returns the data from the first successful result with data.
+        Returns the data from the result with the most rows.
 
         Args:
             genie_results: Results from all sub-questions
 
         Returns:
-            Merged or first available data
+            Data from the result with the most rows
         """
+        best_data = None
+        best_count = 0
         for result in genie_results:
-            if result.get("data"):
-                return result["data"]
-        return None
+            data = result.get("data")
+            if data and len(data) > best_count:
+                best_data = data
+                best_count = len(data)
+        return best_data
 
     def _get_all_columns(
         self,
         genie_results: List[Dict[str, Any]],
     ) -> Optional[List[str]]:
-        """Get columns from the first successful result.
+        """Get columns from the result with the most data.
 
         Args:
             genie_results: Results from all sub-questions
 
         Returns:
-            Column names from first result with columns
+            Column names from result with most data
         """
+        best_columns = None
+        best_count = 0
         for result in genie_results:
-            if result.get("columns"):
-                return result["columns"]
-        return None
+            data = result.get("data")
+            columns = result.get("columns")
+            if data and columns and len(data) > best_count:
+                best_columns = columns
+                best_count = len(data)
+        return best_columns
+
+    def _get_all_data_sets(
+        self,
+        genie_results: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Get all data sets from sub-question results.
+
+        Args:
+            genie_results: Results from all sub-questions
+
+        Returns:
+            List of data sets with their sub-questions and columns
+        """
+        data_sets = []
+        for result in genie_results:
+            data = result.get("data")
+            if data:
+                data_sets.append({
+                    "sub_question": result.get("sub_question", ""),
+                    "columns": result.get("columns", []),
+                    "data": data,
+                    "row_count": len(data),
+                })
+        return data_sets
