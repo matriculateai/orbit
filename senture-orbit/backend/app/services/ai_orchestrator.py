@@ -425,15 +425,14 @@ class AIOrchestrator:
 The user asked: "{question}"
 
 Generate up to {self.MAX_SUB_QUESTIONS} specific, focused data questions that will help answer this business question. Each question should:
-1. Be answerable with a single SQL query against the `zydus.silver` schema ONLY
-2. Reference ONLY tables and columns explicitly listed in the schema above
+1. Be answerable with a single SQL query
+2. Prefer tables from `zydus.silver.*` as documented above
 3. Be clear and unambiguous
 
-CRITICAL CONSTRAINTS:
-- ONLY use tables from `zydus.silver.*` - the tables listed above are the ONLY tables available
-- Do NOT reference tables like zydus.gold.*, zydus.bronze.*, or any other schema
-- Do NOT assume tables or columns exist if they are not explicitly listed above
-- If a question cannot be answered with the available schema, do not include it
+IMPORTANT:
+- The database has both `zydus.silver` and `zydus.gold` schemas available
+- Prefer the silver schema tables documented above when possible
+- Keep questions focused on data that exists in the schema
 
 Return ONLY the questions, one per line, with no numbering or bullet points. If the question is simple enough to answer with one query, return just one question.
 
