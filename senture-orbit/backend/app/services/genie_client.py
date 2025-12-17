@@ -31,9 +31,9 @@ class GenieClient:
     BASE_PATH = "/api/2.0/genie"
 
     # Polling configuration
-    INITIAL_POLL_INTERVAL = 2  # seconds (reduced from 5)
-    MAX_POLL_INTERVAL = 30  # seconds (reduced from 60)
-    MAX_POLL_DURATION = 600  # 10 minutes
+    INITIAL_POLL_INTERVAL = 1  # seconds
+    MAX_POLL_INTERVAL = 8  # seconds (keep polling fast)
+    MAX_POLL_DURATION = 90  # 90 seconds max per query
 
     # Status values
     STATUS_COMPLETED = "COMPLETED"
