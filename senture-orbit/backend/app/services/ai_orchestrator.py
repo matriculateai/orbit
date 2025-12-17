@@ -265,20 +265,26 @@ class AIOrchestrator:
         Returns:
             Complete response with interpretation and data
         """
+        import time
         try:
+            start_time = time.time()
             logger.info(f"Processing question for persona '{persona}': {question[:100]}...")
 
             # Step 1: Decompose question into data sub-questions
+            step1_start = time.time()
             sub_questions = await self._generate_sub_questions(question)
-            logger.info(f"Generated {len(sub_questions)} sub-questions")
+            logger.info(f"Generated {len(sub_questions)} sub-questions in {time.time() - step1_start:.1f}s")
 
             # Step 2: Get SQL from Genie for all sub-questions in parallel
+            step2_start = time.time()
             logger.info(f"Sending {len(sub_questions)} sub-questions to Genie in parallel...")
 
             async def process_sub_question(idx: int, sub_q: str) -> Dict[str, Any]:
                 """Process a single sub-question and return formatted result."""
-                logger.info(f"Processing sub-question {idx+1}: {sub_q[:50]}...")
+                q_start = time.time()
+                logger.info(f"[Q{idx+1}] Starting: {sub_q[:50]}...")
                 result = await self._get_genie_response(sub_q, None)  # Each gets its own conversation
+                logger.info(f"[Q{idx+1}] Completed in {time.time() - q_start:.1f}s")
                 return {
                     "sub_question": sub_q,
                     "sql_query": result.get("sql_query"),
@@ -301,14 +307,17 @@ class AIOrchestrator:
                     conversation_id = result.get("conversation_id")
                     break
 
-            logger.info(f"Completed {len(genie_results)} parallel Genie queries")
+            logger.info(f"Completed {len(genie_results)} parallel Genie queries in {time.time() - step2_start:.1f}s")
 
             # Step 3: Generate interpretation with Claude
+            step3_start = time.time()
             interpretation = await self._generate_interpretation(
                 original_question=question,
                 sub_questions_results=genie_results,
                 persona=persona,
             )
+            logger.info(f"Generated interpretation in {time.time() - step3_start:.1f}s")
+            logger.info(f"Total processing time: {time.time() - start_time:.1f}s")
 
             # Compile the final response
             all_data_sets = self._get_all_data_sets(genie_results)

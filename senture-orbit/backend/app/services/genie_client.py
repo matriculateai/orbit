@@ -31,8 +31,8 @@ class GenieClient:
     BASE_PATH = "/api/2.0/genie"
 
     # Polling configuration
-    INITIAL_POLL_INTERVAL = 5  # seconds
-    MAX_POLL_INTERVAL = 60  # seconds
+    INITIAL_POLL_INTERVAL = 2  # seconds (reduced from 5)
+    MAX_POLL_INTERVAL = 30  # seconds (reduced from 60)
     MAX_POLL_DURATION = 600  # 10 minutes
 
     # Status values
@@ -51,7 +51,7 @@ class GenieClient:
         self.space_id = settings.GENIE_SPACE_ID
         self.base_url = settings.DATABRICKS_HOST.rstrip("/")
 
-        # HTTP client with auth
+        # HTTP client with auth - increased limits for parallel queries
         self.client = httpx.AsyncClient(
             base_url=self.base_url,
             headers={
@@ -59,6 +59,7 @@ class GenieClient:
                 "Content-Type": "application/json",
             },
             timeout=httpx.Timeout(30.0, connect=10.0),
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         )
 
     async def close(self) -> None:
