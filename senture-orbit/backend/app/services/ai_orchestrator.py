@@ -18,226 +18,224 @@ from app.services.genie_client import GenieClient
 
 logger = logging.getLogger(__name__)
 
-# Silver layer schema context for Claude
+# Gold layer schema context for Claude
 SCHEMA_CONTEXT = """
-You have access to a pharmaceutical commercial intelligence database (Zydus) with the following silver layer tables.
-All tables are in the `zydus.silver` schema.
+You have access to a pharmaceutical commercial intelligence database (Zydus) with the following GOLD layer tables.
+All tables are in the `zydus.gold` schema. This is a star schema with dimension and fact tables.
 
-## Sales Data
+## DIMENSION TABLES
 
-### zydus.silver.primary_sales
-Primary sales transactions (sell-in from manufacturer to distributor/pharmacy).
+### zydus.gold.dim_product
+Product master dimension with all product attributes.
 | Column | Type | Description |
 |--------|------|-------------|
-| trans_date | date | Transaction date |
-| month_label | string | Month label |
-| trans_type | string | Transaction type |
-| trans_no | string | Transaction number |
-| bill_to_acc | string | Bill-to account code |
-| bill_to_name | string | Bill-to customer name |
-| ship_to_acc | string | Ship-to account code |
-| ship_to_name | string | Ship-to customer name |
-| sector | string | Business sector |
-| universe | string | Universe/segment |
-| dc_source | string | Distribution center source |
-| po_number | string | Purchase order number |
-| encode | string | Product encode |
-| upd_code | string | UPD code |
+| product_id | string | Unique product identifier (hash key) |
+| product_code | string | Product code (business key) |
+| product_name | string | Product name |
 | manufacturer_code | string | Manufacturer code |
-| product_description | string | Product description/name |
-| batch_no | string | Batch number |
-| expiry_date | date | Batch expiry date |
-| batch_qty | double | Batch quantity |
-| qty_ordered | double | Quantity ordered |
+| nappi_clean | string | Cleaned NAPPI code (South African pharmaceutical ID) |
+| brand | string | Brand name |
+| product_group | string | Product group/category |
+| category | string | Product category (Pain, Cardio, Gastro, etc.) |
 
-### zydus.silver.secondary_sales
-Secondary sales transactions (sell-out from pharmacy to end consumer).
+### zydus.gold.dim_customer
+Customer master dimension with all customer attributes.
 | Column | Type | Description |
 |--------|------|-------------|
-| transaction_number | string | Transaction number |
-| delivered_qty | double | Delivered quantity |
-| bonus_qty | double | Bonus quantity |
-| price | double | Price per unit |
-| transaction_date | date | Transaction date |
-| order_number | string | Order number |
-| transaction_type | string | Transaction type |
-| invoice_number | string | Invoice number |
-| customer_name | string | Customer/pharmacy name |
-| product | string | Product name |
-| ssd_sra | string | SSD SRA code |
-| sra_code | string | SRA code |
-| grade | string | Customer grade (A, B, C, etc.) |
-| supplier | string | Supplier name |
-| brand | string | Brand name |
-| product_group | string | Product group |
-| ssd_customer_group | string | Customer group |
+| customer_id | string | Unique customer identifier (hash key) |
+| customer_name | string | Customer display name |
+| customer_key | string | Normalized customer key for matching |
+| customer_type | string | Customer type (PHARMACY, WHOLESALER, etc.) |
+| customer_group | string | Customer group/segment |
 | country | string | Country |
 | province | string | Province |
 | region | string | Region (e.g., "Gauteng", "Western Cape") |
-
-## Targets
-
-### zydus.silver.primary_sales_targets
-Monthly primary sales targets for 2025 by product.
-| Column | Type | Description |
-|--------|------|-------------|
-| mnf_code | string | Manufacturer code |
-| product_code | string | Product code |
-| product_name | string | Product name |
-| brand | string | Brand name |
-| business | string | Business unit |
-| revenue_split | double | Revenue split percentage |
-| base_business_split | double | Base business split |
-| category | string | Product category |
-| salesvol_jan_25 | double | January 2025 target volume |
-| salesvol_feb_25 | double | February 2025 target volume |
-| salesvol_mar_25 | double | March 2025 target volume |
-| salesvol_apr_25 | double | April 2025 target volume |
-| salesvol_may_25 | double | May 2025 target volume |
-| salesvol_jun_25 | double | June 2025 target volume |
-| salesvol_jul_25 | double | July 2025 target volume |
-| salesvol_aug_25 | double | August 2025 target volume |
-| salesvol_sep_25 | double | September 2025 target volume |
-| salesvol_oct_25 | double | October 2025 target volume |
-| salesvol_nov_25 | double | November 2025 target volume |
-| salesvol_dec_25 | double | December 2025 target volume |
-
-### zydus.silver.secondary_sales_targets
-Monthly secondary sales targets for 2025 by product and customer group.
-| Column | Type | Description |
-|--------|------|-------------|
-| product_code | string | Product code |
-| product_name | string | Product name |
-| brand | string | Brand name |
-| product_group | string | Product group |
-| customer_group | string | Customer group |
-| target_jan_25 | double | January 2025 target |
-| target_feb_25 | double | February 2025 target |
-| target_mar_25 | double | March 2025 target |
-| target_apr_25 | double | April 2025 target |
-| target_may_25 | double | May 2025 target |
-| target_jun_25 | double | June 2025 target |
-| target_jul_25 | double | July 2025 target |
-| target_aug_25 | double | August 2025 target |
-| target_sep_25 | double | September 2025 target |
-| target_oct_25 | double | October 2025 target |
-| target_nov_25 | double | November 2025 target |
-| target_dec_25 | double | December 2025 target |
-| target_total_25 | double | Total 2025 target |
-| loaded_at | timestamp | Data load timestamp |
-
-## Inventory & Stock
-
-### zydus.silver.order_dynamics
-Current stock levels and inventory dynamics by product and location.
-| Column | Type | Description |
-|--------|------|-------------|
-| product_name | string | Product name |
-| product_code | string | Product code |
-| nappi | string | NAPPI code (South African pharmaceutical ID) |
-| location | string | Stock location/warehouse |
-| soh | double | Stock on hand (current inventory) |
-| min_qty | double | Minimum stock quantity threshold |
-| max_qty | double | Maximum stock quantity threshold |
-| avg_sales | double | Average sales rate |
-
-### zydus.silver.backorders
-Backorder data - orders that couldn't be fulfilled.
-| Column | Type | Description |
-|--------|------|-------------|
-| created_date | date | Backorder creation date |
-| branch | string | Branch |
-| supply_from | string | Supply source |
-| client_code | string | Client code |
-| category | string | Product category |
-| issue_code | string | Issue code |
-| process_code | string | Process code |
-| order_no | string | Order number |
-| warehouse | string | Warehouse |
-| manufacture_id | string | Manufacturer ID |
-| manufacture_code | string | Manufacturer code |
-| sku_id | string | SKU ID |
-| sku_name | string | SKU/Product name |
-| sku_type | string | SKU type |
-| qty | double | Backorder quantity |
-| qty_without_ration | double | Quantity without rationing |
-| qty_if | double | Quantity if available |
-| volume | double | Volume value |
-| status | string | Backorder status |
-| reason | string | Backorder reason |
-
-## Sales Rep Activity
-
-### zydus.silver.rep_monthly_activity
-Monthly aggregated sales rep performance metrics.
-| Column | Type | Description |
-|--------|------|-------------|
-| rep_code | string | Rep code |
-| rep_name | string | Rep name |
-| sra_code | string | SRA code |
-| territory | string | Territory |
-| region | string | Region |
 | sub_region | string | Sub-region |
 | town | string | Town |
-| speciality | string | Medical speciality focus |
-| cycle | string | Sales cycle |
-| month | string | Month name |
-| month_number | int | Month number (1-12) |
-| year | int | Year |
+| suburb | string | Suburb |
+| speciality | string | Medical speciality (for HCP customers) |
+
+### zydus.gold.dim_rep
+Sales representative dimension.
+| Column | Type | Description |
+|--------|------|-------------|
+| rep_id | string | Unique rep identifier (hash key) |
+| rep_code | string | Rep code (business key) |
+| rep_name | string | Rep name |
+| region | string | Rep's region |
+| territory | string | Rep's territory |
+| sra_code | string | Sales Rep Area code |
+
+### zydus.gold.dim_date
+Date dimension for time-based analysis.
+| Column | Type | Description |
+|--------|------|-------------|
+| date_key | date | Date (primary key) |
+| year | int | Year (e.g., 2025) |
+| month | int | Month number (1-12) |
+| yyyymm | string | Year-month string (e.g., "2025-01") |
+| month_name | string | Month name (e.g., "January") |
+| quarter | int | Quarter (1-4) |
+
+## FACT TABLES
+
+### zydus.gold.fact_primary_sales_monthly
+Aggregated primary sales (sell-in) by month, product, and customer.
+| Column | Type | Description |
+|--------|------|-------------|
+| yyyymm | string | Year-month (e.g., "2025-01") |
+| product_id | string | FK to dim_product |
+| customer_id | string | FK to dim_customer |
+| primary_value | double | Total primary sales value (ZAR) |
+| qty_moved | double | Total quantity sold |
+
+### zydus.gold.fact_secondary_sales_daily
+Daily secondary sales (sell-out) transactions.
+| Column | Type | Description |
+|--------|------|-------------|
+| date_key | date | Transaction date (FK to dim_date) |
+| product_id | string | FK to dim_product |
+| customer_id | string | FK to dim_customer |
+| delivered_qty | double | Quantity delivered |
+| secondary_value | double | Sales value (ZAR) |
+
+### zydus.gold.fact_stock_latest
+Current stock levels (latest snapshot).
+| Column | Type | Description |
+|--------|------|-------------|
+| snapshot_date | date | Date of stock snapshot |
+| product_id | string | FK to dim_product |
+| customer_id | string | FK to dim_customer (location) |
+| soh | double | Stock on hand (current inventory units) |
+| min_qty | double | Minimum stock threshold |
+| max_qty | double | Maximum stock threshold |
+| avg_sales | double | Average daily sales rate |
+
+### zydus.gold.fact_backorders_monthly
+Monthly backorder aggregates.
+| Column | Type | Description |
+|--------|------|-------------|
+| yyyymm | string | Year-month |
+| product_id | string | FK to dim_product |
+| customer_id | string | FK to dim_customer |
+| qty | double | Backorder quantity |
+| volume | double | Backorder volume value |
+
+### zydus.gold.fact_rep_calls_daily
+Daily sales rep call/visit records.
+| Column | Type | Description |
+|--------|------|-------------|
+| date_key | date | Call date (FK to dim_date) |
+| rep_id | string | FK to dim_rep |
+| customer_id | string | FK to dim_customer |
+| call_type | string | Type of call |
+| visited | string | Whether customer was visited (Y/N) |
+| new_order | double | New order value from this call |
+| written_value | double | Written/recorded value |
+
+### zydus.gold.fact_rep_activity_monthly
+Monthly aggregated rep performance metrics.
+| Column | Type | Description |
+|--------|------|-------------|
+| rep_id | string | FK to dim_rep |
+| yyyymm | string | Year-month |
 | total_calls | int | Total calls made |
 | unique_calls | int | Unique customer calls |
 | productive_calls | int | Productive calls (resulted in activity) |
-| coverage_percent | double | Coverage percentage (customers visited / total customers) |
+| coverage_percent | double | Coverage % (customers visited / total) |
 | workable_days | int | Workable days in month |
 | days_worked | int | Actual days worked |
-| strike_rate | double | Strike rate (orders / calls percentage) |
+| strike_rate | double | Strike rate (orders / calls %) |
 | avg_calls_per_day | double | Average calls per day |
+| customers_seen | int | Number of customers seen |
+| appointments | int | Number of appointments |
+| new_orders | int | Number of new orders |
+| written_value | double | Total written value |
 
-### zydus.silver.repwize_coverage
-Detailed rep call/visit records by customer.
+### zydus.gold.fact_targets_2025
+2025 sales targets by product and target type.
 | Column | Type | Description |
 |--------|------|-------------|
+| product_id | string | FK to dim_product |
+| product_code | string | Product code |
+| target_type | string | Target type (PRIMARY or SECONDARY) |
+| target_volume_2025 | double | 2025 volume target |
+| target_value_2025 | double | 2025 value target (ZAR) |
+
+## VIEWS (Pre-calculated KPIs)
+
+### zydus.gold.mv_kpi_dashboard
+Pre-calculated KPI dashboard with stock opportunities.
+| Column | Type | Description |
+|--------|------|-------------|
+| product_code | string | Product code |
+| product_name | string | Product name |
+| brand | string | Brand |
+| customer_name | string | Customer name |
+| customer_group | string | Customer group |
+| region | string | Region |
+| soh | double | Stock on hand |
+| avg_daily_units | double | Average daily sales units |
+| dsoh_days | double | Days stock on hand (SOH / avg_daily) |
+| ideal_stock_45d_units | double | Ideal stock for 45 days |
+| opportunity_units | double | Stock opportunity in units (ideal - SOH) |
+| opportunity_value | double | Stock opportunity value (ZAR) |
+
+### zydus.gold.vw_rep_customer_coverage
+Detailed rep coverage with derived KPIs.
+| Column | Type | Description |
+|--------|------|-------------|
+| rep_id | string | Rep ID |
 | rep_code | string | Rep code |
 | rep_name | string | Rep name |
-| rep_sra | string | Rep SRA code |
+| rep_sra | string | Rep SRA |
 | rep_territory | string | Rep territory |
 | customer_code | string | Customer code |
 | customer_name | string | Customer name |
 | speciality | string | Customer speciality |
-| grade | string | Customer grade (A, B, C - importance ranking) |
-| region | string | Region |
-| sub_region | string | Sub-region |
-| town | string | Town |
-| brick | string | Brick (geographic micro-area) |
-| call_date | date | Call/visit date |
-| call_type | string | Type of call |
-| visited | string | Whether customer was visited (Y/N) |
-| calls_in_cycle | int | Calls made in current cycle |
-| unique_calls | int | Unique calls |
-| appointment | string | Whether appointment was made |
-| new_order | double | New order value from this call |
-| written_value | double | Written/recorded value |
+| grade | string | Customer grade (A, B, C) |
+| customer_region | string | Customer region |
+| call_date | date | Call date |
+| yyyymm | string | Year-month |
+| year | int | Year |
+| quarter | int | Quarter |
+| month | int | Month |
+| call_type | string | Call type |
+| visited | string | Visited (Y/N) |
+| new_order | double | New order value |
+| written_value | double | Written value |
+| work_rate | double | Work rate (days_worked / workable_days) |
+| unique_call_ratio | double | Unique call ratio |
+| visit_flag | int | Visit flag (1 if visited) |
+| unique_calls_per_day | double | Unique calls per day |
 
-## Key Business Concepts
+## KEY BUSINESS CONCEPTS & KPI CALCULATIONS
 
 - **Primary Sales**: Sell-in from manufacturer (Zydus) to distributors/pharmacies
 - **Secondary Sales**: Sell-out from pharmacies to end consumers/patients
 - **SOH (Stock on Hand)**: Current inventory level at a location
-- **DSOH (Days Stock on Hand)**: SOH / avg_sales = days until stockout
+- **DSOH (Days Stock on Hand)**: `soh / avg_sales` = days until stockout
+- **Ideal Stock**: 45 days of stock = `45 * avg_daily_units`
+- **Opportunity Units**: Stock gap = `ideal_stock_45d_units - soh`
+- **Opportunity Value**: `opportunity_units * avg_unit_price`
 - **Strike Rate**: Percentage of rep calls that result in orders
-- **Coverage**: Percentage of target customers visited by reps
-- **Backorders**: Orders that couldn't be fulfilled due to stock issues
-- **NAPPI Code**: South African pharmaceutical product identifier
-- **SRA**: Sales Rep Area code
-- **Grade**: Customer importance ranking (A=highest, B, C, etc.)
+- **Coverage %**: Percentage of target customers visited by reps
+- **Work Rate**: `days_worked / workable_days`
 
-## Common Query Patterns
+## COMMON QUERY PATTERNS
 
-1. **Sales Performance**: Join primary_sales or secondary_sales with targets tables
-2. **Stock Analysis**: Use order_dynamics for current stock, calculate DSOH as soh/avg_sales
-3. **Rep Performance**: Use rep_monthly_activity for aggregates, repwize_coverage for details
-4. **Target vs Actual**: Compare sales tables with corresponding targets tables by month
-5. **Regional Analysis**: Group by region, province, or sub_region columns
+1. **Sales vs Target**: Join `fact_primary_sales_monthly` or `fact_secondary_sales_daily` with `fact_targets_2025` via `product_id`
+2. **Stock Opportunities**: Use `mv_kpi_dashboard` for pre-calculated opportunities, or join `fact_stock_latest` with `dim_product` and `dim_customer`
+3. **Rep Performance**: Use `fact_rep_activity_monthly` for aggregates, join with `dim_rep` for rep details
+4. **Customer Analysis**: Join fact tables with `dim_customer` for regional/segment breakdowns
+5. **Time Analysis**: Join fact tables with `dim_date` for period comparisons
+
+## IMPORTANT NOTES
+
+- Always join fact tables to dimension tables using the `_id` columns (product_id, customer_id, rep_id)
+- Use `yyyymm` for monthly aggregations, `date_key` for daily data
+- The `mv_kpi_dashboard` view has pre-calculated stock opportunity KPIs - use it for stock analysis
+- Target comparisons should filter `fact_targets_2025` by `target_type` (PRIMARY or SECONDARY)
 """
 
 PERSONA_CONTEXTS = {
@@ -425,14 +423,15 @@ class AIOrchestrator:
 The user asked: "{question}"
 
 Generate up to {self.MAX_SUB_QUESTIONS} specific, focused data questions that will help answer this business question. Each question should:
-1. Be answerable with a single SQL query
-2. Prefer tables from `zydus.silver.*` as documented above
+1. Be answerable with a single SQL query against the `zydus.gold` schema
+2. Use the dimension and fact tables documented above
 3. Be clear and unambiguous
 
 IMPORTANT:
-- The database has both `zydus.silver` and `zydus.gold` schemas available
-- Prefer the silver schema tables documented above when possible
-- Keep questions focused on data that exists in the schema
+- ONLY use tables from the `zydus.gold` schema as documented above
+- Use dimension tables (dim_*) for lookups and fact tables (fact_*) for metrics
+- For stock opportunities, prefer the `mv_kpi_dashboard` view which has pre-calculated KPIs
+- Join fact tables to dimension tables using the `_id` columns
 
 Return ONLY the questions, one per line, with no numbering or bullet points. If the question is simple enough to answer with one query, return just one question.
 
