@@ -4,25 +4,19 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.config import Settings, get_settings
+from app.dependencies import get_postgres, get_redis
 from app.models.responses import (
     DashboardResponse,
     ExecutiveDashboardResponse,
     ManagerDashboardResponse,
     RepDashboardResponse,
 )
-from app.services.databricks import DatabricksService
+from app.services.postgres import PostgresService
+from app.services.redis_service import RedisService
 from app.services.persona_formatter import PersonaFormatter
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-def get_databricks_service(
-    settings: Settings = Depends(get_settings),
-) -> DatabricksService:
-    """Dependency for Databricks service."""
-    return DatabricksService(settings)
 
 
 # ==================== Executive Dashboard ====================
