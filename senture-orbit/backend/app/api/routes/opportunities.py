@@ -4,19 +4,13 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.config import Settings, get_settings
-from app.services.databricks import DatabricksService
+from app.dependencies import get_postgres, get_redis
+from app.services.postgres import PostgresService
+from app.services.redis_service import RedisService
 from app.services.persona_formatter import PersonaFormatter
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-def get_databricks_service(
-    settings: Settings = Depends(get_settings),
-) -> DatabricksService:
-    """Dependency for Databricks service."""
-    return DatabricksService(settings)
 
 
 @router.get("/")
@@ -27,14 +21,24 @@ async def get_opportunities(
     max_dsoh: Optional[int] = Query(
         default=45, description="Maximum days stock on hand"
     ),
-    db: DatabricksService = Depends(get_databricks_service),
+    postgres: PostgresService = Depends(get_postgres),
+    redis: Optional[RedisService] = Depends(get_redis),
 ) -> Dict[str, Any]:
     """Get stock opportunities with optional filters.
 
     Returns opportunities where DSOH < threshold and there's positive value.
     """
     try:
-        settings = get_settings()
+        # Build cache key
+        cache_key = None
+        if redis:
+            cache_key = redis.generate_cache_key(
+                f"opportunities:limit={limit}:region={region}:min_value={min_value}:max_dsoh={max_dsoh}"
+            )
+            cached = await redis.get_cached_result(cache_key)
+            if cached:
+                logger.info("Returning cached opportunities")
+                return cached
 
         # Build filters
         filters = [f"dsoh_days < {max_dsoh}", "opportunity_value > 0"]
@@ -61,20 +65,19 @@ async def get_opportunities(
             ideal_stock_45d_units,
             opportunity_units,
             opportunity_value
-        FROM {settings.DATABRICKS_CATALOG}.{settings.DATABRICKS_SCHEMA}.mv_kpi_dashboard
+        FROM agg.kpi_dashboard
         WHERE {where_clause}
         ORDER BY opportunity_value DESC
         LIMIT {limit}
         """
 
-        results = await db.execute_query(query)
-        db.close()
+        results = await postgres.execute_query(query)
 
         # Calculate summary stats
         total_value = sum(r.get("opportunity_value", 0) for r in results)
         critical_count = sum(1 for r in results if r.get("dsoh_days", 0) < 14)
 
-        return {
+        response = {
             "success": True,
             "total_count": len(results),
             "total_value": total_value,
@@ -82,9 +85,14 @@ async def get_opportunities(
             "opportunities": results,
         }
 
+        # Cache result
+        if redis and cache_key:
+            await redis.cache_result(cache_key, response, ttl=1800)  # 30 min cache
+
+        return response
+
     except Exception as e:
         logger.error(f"Error getting opportunities: {e}")
-        db.close()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to retrieve opportunities: {str(e)}",
@@ -93,13 +101,20 @@ async def get_opportunities(
 
 @router.get("/summary")
 async def get_opportunities_summary(
-    db: DatabricksService = Depends(get_databricks_service),
+    postgres: PostgresService = Depends(get_postgres),
+    redis: Optional[RedisService] = Depends(get_redis),
 ) -> Dict[str, Any]:
     """Get summary statistics for all opportunities."""
     try:
-        settings = get_settings()
+        # Check cache
+        cache_key = None
+        if redis:
+            cache_key = redis.generate_cache_key("opportunities:summary")
+            cached = await redis.get_cached_result(cache_key)
+            if cached:
+                return cached
 
-        query = f"""
+        query = """
         SELECT
             COUNT(*) as total_opportunities,
             SUM(opportunity_value) as total_value,
@@ -109,18 +124,17 @@ async def get_opportunities_summary(
             AVG(dsoh_days) as avg_dsoh,
             COUNT(DISTINCT customer_name) as affected_customers,
             COUNT(DISTINCT product_code) as affected_products
-        FROM {settings.DATABRICKS_CATALOG}.{settings.DATABRICKS_SCHEMA}.mv_kpi_dashboard
+        FROM agg.kpi_dashboard
         WHERE dsoh_days < 45 AND opportunity_value > 0
         """
 
-        results = await db.execute_query(query)
-        db.close()
+        results = await postgres.execute_query(query)
 
         if not results:
             return {"success": True, "summary": None}
 
         summary = results[0]
-        return {
+        response = {
             "success": True,
             "summary": {
                 "total_opportunities": int(summary.get("total_opportunities", 0)),
@@ -134,9 +148,14 @@ async def get_opportunities_summary(
             },
         }
 
+        # Cache result
+        if redis and cache_key:
+            await redis.cache_result(cache_key, response, ttl=1800)
+
+        return response
+
     except Exception as e:
         logger.error(f"Error getting opportunities summary: {e}")
-        db.close()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to retrieve opportunities summary: {str(e)}",
@@ -145,27 +164,24 @@ async def get_opportunities_summary(
 
 @router.get("/by-region")
 async def get_opportunities_by_region(
-    db: DatabricksService = Depends(get_databricks_service),
+    postgres: PostgresService = Depends(get_postgres),
 ) -> Dict[str, Any]:
     """Get opportunity breakdown by region."""
     try:
-        settings = get_settings()
-
-        query = f"""
+        query = """
         SELECT
             region,
             COUNT(*) as opportunity_count,
             SUM(opportunity_value) as total_value,
             SUM(CASE WHEN dsoh_days < 14 THEN 1 ELSE 0 END) as critical_count,
             AVG(dsoh_days) as avg_dsoh
-        FROM {settings.DATABRICKS_CATALOG}.{settings.DATABRICKS_SCHEMA}.mv_kpi_dashboard
+        FROM agg.kpi_dashboard
         WHERE dsoh_days < 45 AND opportunity_value > 0
         GROUP BY region
         ORDER BY total_value DESC
         """
 
-        results = await db.execute_query(query)
-        db.close()
+        results = await postgres.execute_query(query)
 
         return {
             "success": True,
@@ -174,7 +190,6 @@ async def get_opportunities_by_region(
 
     except Exception as e:
         logger.error(f"Error getting opportunities by region: {e}")
-        db.close()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to retrieve regional opportunities: {str(e)}",
@@ -183,27 +198,24 @@ async def get_opportunities_by_region(
 
 @router.get("/by-brand")
 async def get_opportunities_by_brand(
-    db: DatabricksService = Depends(get_databricks_service),
+    postgres: PostgresService = Depends(get_postgres),
 ) -> Dict[str, Any]:
     """Get opportunity breakdown by brand."""
     try:
-        settings = get_settings()
-
-        query = f"""
+        query = """
         SELECT
             brand,
             COUNT(*) as opportunity_count,
             SUM(opportunity_value) as total_value,
             SUM(CASE WHEN dsoh_days < 14 THEN 1 ELSE 0 END) as critical_count,
             AVG(dsoh_days) as avg_dsoh
-        FROM {settings.DATABRICKS_CATALOG}.{settings.DATABRICKS_SCHEMA}.mv_kpi_dashboard
+        FROM agg.kpi_dashboard
         WHERE dsoh_days < 45 AND opportunity_value > 0
         GROUP BY brand
         ORDER BY total_value DESC
         """
 
-        results = await db.execute_query(query)
-        db.close()
+        results = await postgres.execute_query(query)
 
         return {
             "success": True,
@@ -212,7 +224,6 @@ async def get_opportunities_by_brand(
 
     except Exception as e:
         logger.error(f"Error getting opportunities by brand: {e}")
-        db.close()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to retrieve brand opportunities: {str(e)}",
@@ -222,11 +233,76 @@ async def get_opportunities_by_brand(
 @router.get("/customer/{customer_name}")
 async def get_customer_opportunities(
     customer_name: str,
-    db: DatabricksService = Depends(get_databricks_service),
+    postgres: PostgresService = Depends(get_postgres),
 ) -> Dict[str, Any]:
     """Get all opportunities for a specific customer."""
     try:
-        settings = get_settings()
+        query = f"""
+        SELECT
+            product_code,
+            product_name,
+            brand,
+            customer_name,
+            customer_group,
+            region,
+            soh,
+            avg_daily_units,
+            dsoh_days,
+            ideal_stock_45d_units,
+            opportunity_units,
+            opportunity_value
+        FROM agg.kpi_dashboard
+        WHERE customer_name = '{customer_name}'
+            AND dsoh_days < 45
+            AND opportunity_value > 0
+        ORDER BY opportunity_value DESC
+        """
+
+        results = await postgres.execute_query(query)
+
+        total_value = sum(r.get("opportunity_value", 0) for r in results)
+
+        return {
+            "success": True,
+            "customer_name": customer_name,
+            "total_value": total_value,
+            "opportunity_count": len(results),
+            "opportunities": results,
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting customer opportunities: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve customer opportunities: {str(e)}",
+        )
+
+
+@router.get("/priority")
+async def get_priority_opportunities(
+    persona: str = Query(
+        default="executive",
+        description="User persona for priority ranking",
+        pattern="^(executive|manager|rep)$",
+    ),
+    limit: int = Query(default=10, ge=1, le=50),
+    region: Optional[str] = Query(None),
+    postgres: PostgresService = Depends(get_postgres),
+) -> Dict[str, Any]:
+    """Get prioritized opportunities based on persona.
+
+    Executive: Highest value opportunities
+    Manager: Mix of critical and high-value in region
+    Rep: Immediately actionable opportunities
+    """
+    try:
+        # Build query for top opportunities
+        where_clauses = ["dsoh_days < 45", "opportunity_value > 0"]
+
+        if region:
+            where_clauses.append(f"region = '{region}'")
+
+        where_clause = " AND ".join(where_clauses)
 
         query = f"""
         SELECT
@@ -242,55 +318,13 @@ async def get_customer_opportunities(
             ideal_stock_45d_units,
             opportunity_units,
             opportunity_value
-        FROM {settings.DATABRICKS_CATALOG}.{settings.DATABRICKS_SCHEMA}.mv_kpi_dashboard
-        WHERE customer_name = '{customer_name}'
-            AND dsoh_days < 45
-            AND opportunity_value > 0
+        FROM agg.kpi_dashboard
+        WHERE {where_clause}
         ORDER BY opportunity_value DESC
+        LIMIT {limit}
         """
 
-        results = await db.execute_query(query)
-        db.close()
-
-        total_value = sum(r.get("opportunity_value", 0) for r in results)
-
-        return {
-            "success": True,
-            "customer_name": customer_name,
-            "total_value": total_value,
-            "opportunity_count": len(results),
-            "opportunities": results,
-        }
-
-    except Exception as e:
-        logger.error(f"Error getting customer opportunities: {e}")
-        db.close()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve customer opportunities: {str(e)}",
-        )
-
-
-@router.get("/priority")
-async def get_priority_opportunities(
-    persona: str = Query(
-        default="executive",
-        description="User persona for priority ranking",
-        regex="^(executive|manager|rep)$",
-    ),
-    limit: int = Query(default=10, ge=1, le=50),
-    region: Optional[str] = Query(None),
-    db: DatabricksService = Depends(get_databricks_service),
-) -> Dict[str, Any]:
-    """Get prioritized opportunities based on persona.
-
-    Executive: Highest value opportunities
-    Manager: Mix of critical and high-value in region
-    Rep: Immediately actionable opportunities
-    """
-    try:
-        opportunities = await db.get_top_opportunities(limit=limit, region=region)
-        db.close()
+        opportunities = await postgres.execute_query(query)
 
         # Apply persona-specific formatting and insights
         formatter = PersonaFormatter(persona)
@@ -304,7 +338,6 @@ async def get_priority_opportunities(
 
     except Exception as e:
         logger.error(f"Error getting priority opportunities: {e}")
-        db.close()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to retrieve priority opportunities: {str(e)}",

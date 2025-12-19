@@ -175,11 +175,13 @@ class RepDashboardResponse(BaseModel):
 class HealthResponse(BaseModel):
     """Health check response."""
 
-    status: str = Field(..., description="Overall health status")
-    databricks_connected: bool = Field(
-        ..., description="Whether Databricks is connected"
+    status: str = Field(..., description="Overall health status (healthy, degraded, unhealthy)")
+    postgres_connected: bool = Field(
+        ..., description="Whether PostgreSQL (Supabase) is connected"
     )
-    genie_available: bool = Field(..., description="Whether Genie is available")
+    redis_available: bool = Field(..., description="Whether Redis cache is available")
+    qdrant_available: bool = Field(..., description="Whether Qdrant vector DB is available")
+    claude_available: bool = Field(..., description="Whether Claude AI service is available")
     version: str = Field(..., description="API version")
     details: Optional[Dict[str, Any]] = Field(
         None, description="Additional health details"
