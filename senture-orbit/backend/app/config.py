@@ -19,27 +19,44 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
 
-    # Databricks
-    DATABRICKS_HOST: str = ""
-    DATABRICKS_TOKEN: str = ""
-    DATABRICKS_HTTP_PATH: str = ""
-    DATABRICKS_CATALOG: str = "pharma_gold"
-    DATABRICKS_SCHEMA: str = "gold"
+    # Supabase PostgreSQL
+    POSTGRES_HOST: str = ""
+    POSTGRES_PORT: int = 6543  # Use pooler port (6543) not direct port (5432)
+    POSTGRES_DB: str = "postgres"
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = ""
+    POSTGRES_POOL_MIN_SIZE: int = 5
+    POSTGRES_POOL_MAX_SIZE: int = 20
+    POSTGRES_COMMAND_TIMEOUT: int = 30  # seconds
+    POSTGRES_SSL_MODE: str = "require"  # Supabase requires SSL
 
-    # Genie
-    GENIE_ENABLED: bool = True
-    GENIE_SPACE_ID: str = ""
+    # Redis Cache
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str = ""
+    REDIS_DB: int = 0
+    REDIS_CACHE_TTL: int = 3600  # 1 hour default cache TTL
+
+    # Qdrant Vector DB (for RAG - query history)
+    QDRANT_HOST: str = "localhost"
+    QDRANT_PORT: int = 6333
+    QDRANT_API_KEY: str = ""
+    QDRANT_COLLECTION: str = "query_history"
+    QDRANT_VECTOR_SIZE: int = 384  # for all-MiniLM-L6-v2 embeddings
 
     # Claude AI (Anthropic)
     ANTHROPIC_API_KEY: str = ""
-    CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
+    CLAUDE_HAIKU_MODEL: str = "claude-haiku-4.5-20251022"  # For simple queries
+    CLAUDE_SONNET_MODEL: str = "claude-sonnet-4-20250514"  # For complex queries
     CLAUDE_MAX_TOKENS: int = 4096
+
+    # Query Processing
+    QUERY_COMPLEXITY_THRESHOLD: float = 0.6  # Route to Sonnet if complexity > 0.6
+    RAG_TOP_K: int = 3  # Retrieve top 3 similar past queries for RAG
+    ENABLE_QUERY_CACHING: bool = True
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
-
-    # Redis (optional)
-    REDIS_URL: str = "redis://localhost:6379"
 
 
 @lru_cache()

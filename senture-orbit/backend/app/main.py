@@ -1,6 +1,6 @@
 """Senture Orbit API - Pharmaceutical Commercial Intelligence Platform.
 
-FastAPI application for pharmaceutical analytics with Databricks Genie integration.
+FastAPI application for pharmaceutical analytics with Supabase PostgreSQL and Claude AI.
 """
 import logging
 from contextlib import asynccontextmanager
@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from app.api import api_router
 from app.config import get_settings
 from app.middleware import setup_cors
+from app.dependencies import initialize_services, shutdown_services
 
 # Configure logging
 logging.basicConfig(
@@ -27,13 +28,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     settings = get_settings()
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    logger.info(f"Databricks Host: {settings.DATABRICKS_HOST}")
-    logger.info(f"Genie Enabled: {settings.GENIE_ENABLED}")
+    logger.info(f"PostgreSQL Host: {settings.POSTGRES_HOST}")
+    logger.info(f"Redis Host: {settings.REDIS_HOST}")
+    logger.info(f"Qdrant Host: {settings.QDRANT_HOST}")
+
+    # Initialize all services (Postgres, Redis, Qdrant, Claude)
+    try:
+        await initialize_services()
+        logger.info("✓ All services initialized successfully")
+    except Exception as e:
+        logger.error(f"✗ Failed to initialize services: {e}")
+        raise
 
     yield
 
     # Shutdown
     logger.info("Shutting down application")
+    await shutdown_services()
 
 
 def create_app() -> FastAPI:
@@ -43,7 +54,10 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
-        description="Pharmaceutical Commercial Intelligence Platform with Databricks Genie AI",
+        description=(
+            "Pharmaceutical Commercial Intelligence Platform powered by "
+            "Supabase PostgreSQL and Claude AI (Haiku/Sonnet) for advanced analytics"
+        ),
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
