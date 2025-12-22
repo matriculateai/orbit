@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from anthropic import Anthropic
 
 from app.config import get_settings
+from app.security import validate_query, SQLValidationError
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -348,51 +349,24 @@ Respond with ONLY: 'simple' or 'complex'
         """
         Validate that SQL is safe (SELECT-only, no dangerous operations).
 
+        Uses the centralized SQLValidator for comprehensive security checks.
+
         Args:
             sql: Generated SQL query
 
         Returns:
-            True if safe, raises ValueError if dangerous
+            True if safe, raises SQLValidationError if dangerous
 
         Raises:
-            ValueError: If SQL contains dangerous operations
+            SQLValidationError: If SQL contains dangerous operations
         """
-        sql_upper = sql.upper()
-
-        # Dangerous keywords that should never appear
-        dangerous_keywords = [
-            'DROP', 'DELETE', 'UPDATE', 'INSERT', 'TRUNCATE',
-            'ALTER', 'CREATE', 'GRANT', 'REVOKE', 'EXECUTE',
-            'EXEC', 'CALL', 'DECLARE', 'SET'
-        ]
-
-        for keyword in dangerous_keywords:
-            # Use word boundaries to avoid false positives
-            pattern = r'\b' + keyword + r'\b'
-            if re.search(pattern, sql_upper):
-                raise ValueError(
-                    f"Dangerous SQL keyword detected: {keyword}. "
-                    f"Only SELECT queries are allowed."
-                )
-
-        # Ensure query starts with SELECT (after whitespace/comments)
-        sql_trimmed = sql_upper.strip()
-        if not sql_trimmed.startswith('SELECT') and not sql_trimmed.startswith('WITH'):
-            raise ValueError(
-                "SQL must start with SELECT or WITH (for CTEs). "
-                f"Got: {sql_trimmed[:50]}"
-            )
-
-        # Check for multiple statements (SQL injection risk)
-        # Allow semicolon only at the end
-        semicolon_count = sql.count(';')
-        if semicolon_count > 1:
-            raise ValueError(
-                "Multiple SQL statements not allowed (SQL injection risk)"
-            )
-
-        logger.debug("SQL safety validation passed")
-        return True
+        try:
+            validate_query(sql, allow_multiple_statements=False)
+            logger.debug("SQL safety validation passed")
+            return True
+        except SQLValidationError as e:
+            logger.error(f"SQL validation failed: {e}")
+            raise ValueError(str(e)) from e
 
     async def generate_sql(
         self,

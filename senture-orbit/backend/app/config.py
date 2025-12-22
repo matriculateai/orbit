@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     RAG_TOP_K: int = 3  # Retrieve top 3 similar past queries for RAG
     ENABLE_QUERY_CACHING: bool = True
 
+    # SQL Security
+    SQL_MAX_QUERY_LENGTH: int = 50000  # Maximum SQL query length (prevent DoS)
+    SQL_MAX_RESULT_ROWS: int = 10000  # Maximum rows returned per query
+    SQL_ENABLE_VALIDATION: bool = True  # Enable SQL validation (always True in production)
+    SQL_ALLOWED_SCHEMAS: List[str] = ["dim", "fact", "agg", "information_schema"]
+
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
 

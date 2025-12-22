@@ -11,6 +11,12 @@ from tenacity import (
 )
 
 from app.config import get_settings
+from app.security import (
+    validate_query,
+    validate_schema,
+    validate_table_name,
+    SQLValidationError,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -100,19 +106,25 @@ class PostgresService:
         query: str,
         params: Optional[List[Any]] = None,
         fetch_all: bool = True,
+        skip_validation: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Execute SQL query and return results as list of dicts.
+
+        SECURITY: All queries are validated and executed in read-only transactions
+        unless skip_validation=True (only for internal health checks).
 
         Args:
             query: SQL SELECT statement
             params: Optional query parameters (for parameterized queries)
             fetch_all: If True, fetch all rows; if False, fetch one row
+            skip_validation: If True, skip SQL validation (use only for trusted queries)
 
         Returns:
             List of dictionaries representing rows
 
         Raises:
+            SQLValidationError: If query validation fails
             asyncpg.PostgresError: On database errors
             RuntimeError: If connection pool not initialized
         """
@@ -122,15 +134,26 @@ class PostgresService:
                 "Call connect() first."
             )
 
+        # SECURITY: Validate query before execution (unless explicitly skipped)
+        if not skip_validation:
+            try:
+                validate_query(query, allow_multiple_statements=False)
+            except SQLValidationError as e:
+                logger.error(f"SQL validation failed: {e}\nQuery: {query[:200]}")
+                raise
+
         start_time = time.time()
 
         try:
             async with self.pool.acquire() as conn:
-                if fetch_all:
-                    rows = await conn.fetch(query, *(params or []))
-                else:
-                    row = await conn.fetchrow(query, *(params or []))
-                    rows = [row] if row else []
+                # SECURITY: Execute in read-only transaction
+                # This provides defense-in-depth at the database level
+                async with conn.transaction(readonly=True):
+                    if fetch_all:
+                        rows = await conn.fetch(query, *(params or []))
+                    else:
+                        row = await conn.fetchrow(query, *(params or []))
+                        rows = [row] if row else []
 
                 # Convert asyncpg.Record to dict
                 result = [dict(row) for row in rows]
@@ -150,6 +173,9 @@ class PostgresService:
 
                 return result
 
+        except SQLValidationError:
+            # Re-raise validation errors without modification
+            raise
         except asyncpg.PostgresSyntaxError as e:
             logger.error(f"SQL syntax error: {e}\nQuery: {query}")
             raise
@@ -162,26 +188,46 @@ class PostgresService:
 
     async def execute_query_batch(
         self,
-        queries: List[str]
+        queries: List[str],
+        skip_validation: bool = False,
     ) -> List[List[Dict[str, Any]]]:
         """
-        Execute multiple queries in a single transaction.
+        Execute multiple queries in a single read-only transaction.
+
+        SECURITY: All queries are validated before execution unless skip_validation=True.
 
         Args:
             queries: List of SQL queries to execute
+            skip_validation: If True, skip SQL validation (use only for trusted queries)
 
         Returns:
             List of results (one per query)
+
+        Raises:
+            SQLValidationError: If any query validation fails
+            asyncpg.PostgresError: On database errors
         """
         if self.pool is None:
             raise RuntimeError("PostgreSQL connection pool not initialized")
+
+        # SECURITY: Validate all queries before execution
+        if not skip_validation:
+            for i, query in enumerate(queries):
+                try:
+                    validate_query(query, allow_multiple_statements=False)
+                except SQLValidationError as e:
+                    logger.error(
+                        f"SQL validation failed for query {i+1}/{len(queries)}: {e}"
+                    )
+                    raise
 
         results = []
         start_time = time.time()
 
         try:
             async with self.pool.acquire() as conn:
-                async with conn.transaction():
+                # SECURITY: Execute all queries in a read-only transaction
+                async with conn.transaction(readonly=True):
                     for query in queries:
                         rows = await conn.fetch(query)
                         results.append([dict(row) for row in rows])
@@ -194,6 +240,8 @@ class PostgresService:
 
             return results
 
+        except SQLValidationError:
+            raise
         except asyncpg.PostgresError as e:
             logger.error(f"PostgreSQL batch query error: {e}")
             raise
@@ -213,8 +261,11 @@ class PostgresService:
                 logger.error("Health check failed: Connection pool not initialized")
                 return False
 
-            # Simple query to test connection
-            result = await self.execute_query("SELECT 1 as health_check")
+            # Simple query to test connection (skip validation for trusted query)
+            result = await self.execute_query(
+                "SELECT 1 as health_check",
+                skip_validation=True
+            )
 
             if result and result[0].get('health_check') == 1:
                 logger.debug("PostgreSQL health check passed")
@@ -231,13 +282,22 @@ class PostgresService:
         """
         Get table metadata (columns, types, etc.).
 
+        SECURITY: Validates schema and table names before querying.
+
         Args:
             schema: Schema name (e.g., 'dim', 'fact', 'agg')
             table: Table name
 
         Returns:
             Dictionary with table metadata
+
+        Raises:
+            SQLValidationError: If schema or table name is invalid
         """
+        # SECURITY: Validate schema and table names to prevent SQL injection
+        validate_schema(schema)
+        validate_table_name(table)
+
         query = """
         SELECT
             column_name,
@@ -249,7 +309,12 @@ class PostgresService:
         ORDER BY ordinal_position
         """
 
-        columns = await self.execute_query(query, params=[schema, table])
+        # Use parameterized query (skip validation - already validated parameters)
+        columns = await self.execute_query(
+            query,
+            params=[schema, table],
+            skip_validation=True
+        )
 
         return {
             "schema": schema,
@@ -262,15 +327,29 @@ class PostgresService:
         """
         Get approximate row count for a table.
 
+        SECURITY: Validates schema and table names to prevent SQL injection.
+
         Args:
             schema: Schema name
             table: Table name
 
         Returns:
             Approximate row count
+
+        Raises:
+            SQLValidationError: If schema or table name is invalid
         """
+        # SECURITY: Validate schema and table names to prevent SQL injection
+        # This is CRITICAL - the old implementation used f-string formatting!
+        validate_schema(schema)
+        validate_table_name(table)
+
+        # Safe to use validated identifiers in query
+        # Note: PostgreSQL doesn't support parameterized table/schema names,
+        # so we must validate and use string interpolation
         query = f"SELECT COUNT(*) as count FROM {schema}.{table}"
-        result = await self.execute_query(query, fetch_all=False)
+
+        result = await self.execute_query(query, fetch_all=False, skip_validation=True)
         return result[0]['count'] if result else 0
 
     async def get_pool_stats(self) -> Dict[str, Any]:
