@@ -42,31 +42,58 @@ class QdrantService:
         logger.info("Loaded embedding model: all-MiniLM-L6-v2 (384 dimensions)")
 
     async def connect(self):
-        """Initialize Qdrant client."""
+        """
+        Initialize Qdrant client.
+
+        Supports two connection modes:
+        1. Qdrant Cloud: Use QDRANT_URL and QDRANT_API_KEY
+        2. Local Qdrant: Use QDRANT_HOST and QDRANT_PORT
+        """
         if self.client is not None:
             logger.warning("Qdrant client already initialized")
             return
 
         try:
-            # Initialize client
-            if settings.QDRANT_API_KEY:
+            # Mode 1: Qdrant Cloud (URL + API Key)
+            if settings.QDRANT_URL:
+                if not settings.QDRANT_API_KEY:
+                    raise ValueError(
+                        "QDRANT_API_KEY is required when using QDRANT_URL "
+                        "(Qdrant Cloud)"
+                    )
+
                 self.client = QdrantClient(
-                    host=settings.QDRANT_HOST,
-                    port=settings.QDRANT_PORT,
+                    url=settings.QDRANT_URL,
                     api_key=settings.QDRANT_API_KEY,
                     timeout=10,
                 )
-            else:
-                self.client = QdrantClient(
-                    host=settings.QDRANT_HOST,
-                    port=settings.QDRANT_PORT,
-                    timeout=10,
-                )
+                logger.info(f"Qdrant client initialized (Cloud: {settings.QDRANT_URL})")
 
-            logger.info(
-                f"Qdrant client initialized "
-                f"(host={settings.QDRANT_HOST}:{settings.QDRANT_PORT})"
-            )
+            # Mode 2: Local Qdrant (Host + Port)
+            else:
+                if settings.QDRANT_API_KEY:
+                    # Local with API key (authenticated)
+                    self.client = QdrantClient(
+                        host=settings.QDRANT_HOST,
+                        port=settings.QDRANT_PORT,
+                        api_key=settings.QDRANT_API_KEY,
+                        timeout=10,
+                    )
+                    logger.info(
+                        f"Qdrant client initialized "
+                        f"(Local with auth: {settings.QDRANT_HOST}:{settings.QDRANT_PORT})"
+                    )
+                else:
+                    # Local without API key
+                    self.client = QdrantClient(
+                        host=settings.QDRANT_HOST,
+                        port=settings.QDRANT_PORT,
+                        timeout=10,
+                    )
+                    logger.info(
+                        f"Qdrant client initialized "
+                        f"(Local: {settings.QDRANT_HOST}:{settings.QDRANT_PORT})"
+                    )
 
         except Exception as e:
             logger.error(f"Failed to initialize Qdrant client: {e}")

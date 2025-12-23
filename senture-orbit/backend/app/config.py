@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     REDIS_CACHE_TTL: int = 3600  # 1 hour default cache TTL
 
     # Qdrant Vector DB (for RAG - query history)
+    # For local Qdrant: set QDRANT_HOST and QDRANT_PORT
+    # For Qdrant Cloud: set QDRANT_URL and QDRANT_API_KEY
+    QDRANT_URL: str = ""  # e.g., "https://xyz-example.us-east.aws.cloud.qdrant.io"
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
     QDRANT_API_KEY: str = ""
