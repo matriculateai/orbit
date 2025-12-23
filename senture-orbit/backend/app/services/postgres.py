@@ -2,6 +2,7 @@
 import asyncpg
 import logging
 import time
+from decimal import Decimal
 from typing import List, Dict, Any, Optional
 from tenacity import (
     retry,
@@ -20,6 +21,21 @@ from app.security import (
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _convert_record_to_dict(record: asyncpg.Record) -> Dict[str, Any]:
+    """
+    Convert asyncpg.Record to dict with JSON-serializable values.
+
+    Converts Decimal objects to float for JSON serialization.
+    """
+    result = {}
+    for key, value in record.items():
+        if isinstance(value, Decimal):
+            result[key] = float(value)
+        else:
+            result[key] = value
+    return result
 
 
 class PostgresService:
@@ -155,8 +171,8 @@ class PostgresService:
                         row = await conn.fetchrow(query, *(params or []))
                         rows = [row] if row else []
 
-                # Convert asyncpg.Record to dict
-                result = [dict(row) for row in rows]
+                # Convert asyncpg.Record to dict (with JSON-serializable values)
+                result = [_convert_record_to_dict(row) for row in rows]
 
                 execution_time = time.time() - start_time
                 logger.info(
@@ -230,7 +246,7 @@ class PostgresService:
                 async with conn.transaction(readonly=True):
                     for query in queries:
                         rows = await conn.fetch(query)
-                        results.append([dict(row) for row in rows])
+                        results.append([_convert_record_to_dict(row) for row in rows])
 
             execution_time = time.time() - start_time
             logger.info(

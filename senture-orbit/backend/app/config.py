@@ -49,7 +49,7 @@ class Settings(BaseSettings):
 
     # Claude AI (Anthropic)
     ANTHROPIC_API_KEY: str = ""
-    CLAUDE_HAIKU_MODEL: str = "claude-haiku-4.5-20251022"  # For simple queries
+    CLAUDE_HAIKU_MODEL: str = "claude-3-5-haiku-20241022"  # For simple queries
     CLAUDE_SONNET_MODEL: str = "claude-sonnet-4-20250514"  # For complex queries
     CLAUDE_MAX_TOKENS: int = 4096
 
