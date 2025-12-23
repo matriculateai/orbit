@@ -54,27 +54,49 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """Natural language query response."""
+    """Natural language query response (compatible with frontend GenieResponse)."""
+    # Core response fields
     success: bool
-    question: str
-    answer: str
-    sql: str
-    data: List[Dict[str, Any]]
+    status: str = Field(default="completed", description="Query status")
+
+    # Conversation tracking (for frontend compatibility)
+    conversation_id: str = Field(default="", description="Conversation ID (not used in stateless mode)")
+    message_id: str = Field(default="", description="Message ID (not used in stateless mode)")
+
+    # Question and answer
+    question: str = Field(default="", description="Original question")
+    response: str = Field(description="Natural language answer")
+
+    # SQL and data
+    sql_query: Optional[str] = Field(default=None, description="Generated SQL query")
+    data: Optional[List[Dict[str, Any]]] = Field(default=None, description="Query results")
+
+    # Additional fields for frontend compatibility
+    truncated: bool = Field(default=False, description="Whether results were truncated")
+    error: Optional[str] = Field(default=None, description="Error message if any")
+
+    # Metadata
     metadata: Dict[str, Any] = Field(
+        default_factory=dict,
         description="Query metadata (execution time, model used, etc.)"
     )
-    cached: bool = Field(default=False)
+    cached: bool = Field(default=False, description="Whether result was from cache")
 
     class Config:
         json_schema_extra = {
             "example": {
                 "success": True,
+                "status": "completed",
+                "conversation_id": "",
+                "message_id": "",
                 "question": "What are the top 5 products by sales last month?",
-                "answer": "The top 5 products by sales last month are...",
-                "sql": "SELECT product_name, SUM(secondary_value) as total_sales...",
+                "response": "The top 5 products by sales last month are...",
+                "sql_query": "SELECT product_name, SUM(secondary_value) as total_sales...",
                 "data": [
                     {"product_name": "Disprin 100s", "total_sales": 125000.50}
                 ],
+                "truncated": False,
+                "error": None,
                 "metadata": {
                     "execution_time": 1.23,
                     "model": "claude-haiku-4.5-20251022",
@@ -82,8 +104,6 @@ class ChatResponse(BaseModel):
                     "row_count": 5,
                 },
                 "cached": False,
-            }
-        }
 
 
 class QueryHistoryResponse(BaseModel):
@@ -180,13 +200,18 @@ async def query_chat(
             "similar_queries_count": len(sql_result.get("similar_queries", [])),
         }
 
-        # Build response
+        # Build response (compatible with frontend GenieResponse format)
         response_data = {
             "success": True,
+            "status": "completed",
+            "conversation_id": "",
+            "message_id": "",
             "question": request.question,
-            "answer": answer,
-            "sql": sql,
+            "response": answer,
+            "sql_query": sql,
             "data": data,
+            "truncated": False,
+            "error": None,
             "metadata": metadata,
             "cached": False,
         }
