@@ -337,3 +337,57 @@ async def clear_cache(
             status_code=500,
             detail=f"Failed to clear cache: {str(e)}"
         )
+
+
+@router.get("/suggestions")
+async def get_suggestions(
+    persona: str = "executive",
+) -> Dict[str, Any]:
+    """
+    Get suggested questions based on persona.
+
+    Args:
+        persona: User persona (executive, manager, rep)
+
+    Returns:
+        List of suggested questions
+    """
+    try:
+        # Persona-specific suggestions
+        suggestions_map = {
+            "executive": [
+                "What are the top 5 products by sales this month?",
+                "Show me the sales trend for the last 90 days",
+                "Which regions have the highest opportunity value?",
+                "What is the total value of critical stock opportunities?",
+                "How many active customers do we have?",
+            ],
+            "manager": [
+                "How is my team's performance this month?",
+                "Show rep coverage and strike rates for my territory",
+                "What are the priority opportunities in my region?",
+                "Which products are underperforming in my territory?",
+                "Compare sales performance across my reps",
+            ],
+            "rep": [
+                "What are my priority opportunities today?",
+                "Show my performance metrics for this month",
+                "Which customers need restocking urgently?",
+                "What products should I focus on this week?",
+                "Show my sales vs target",
+            ],
+        }
+
+        suggestions = suggestions_map.get(persona, suggestions_map["executive"])
+
+        return {
+            "success": True,
+            "suggestions": suggestions,
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting suggestions: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get suggestions: {str(e)}"
+        )

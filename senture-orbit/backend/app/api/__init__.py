@@ -11,7 +11,7 @@ api_router.include_router(health.router, tags=["Health"])
 # Claude-powered AI chat endpoint (replaces Genie)
 api_router.include_router(
     chat.router,
-    prefix="/api/v1/chat",
+    prefix="/api/v1/genie",
     tags=["AI Chat"],
 )
 
