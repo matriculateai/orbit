@@ -1,4 +1,4 @@
 """API route modules."""
-from app.api.routes import dashboards, genie_chat, health, opportunities
+from app.api.routes import chat, dashboards, health, opportunities
 
-__all__ = ["dashboards", "genie_chat", "health", "opportunities"]
+__all__ = ["chat", "dashboards", "health", "opportunities"]
