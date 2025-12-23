@@ -2,8 +2,10 @@
 import asyncpg
 import logging
 import time
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Dict, Any, Optional
+from uuid import UUID
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -27,12 +29,19 @@ def _convert_record_to_dict(record: asyncpg.Record) -> Dict[str, Any]:
     """
     Convert asyncpg.Record to dict with JSON-serializable values.
 
-    Converts Decimal objects to float for JSON serialization.
+    Converts PostgreSQL types to JSON-serializable Python types:
+    - Decimal → float
+    - date/datetime → ISO format string
+    - UUID → string
     """
     result = {}
     for key, value in record.items():
         if isinstance(value, Decimal):
             result[key] = float(value)
+        elif isinstance(value, (date, datetime)):
+            result[key] = value.isoformat()
+        elif isinstance(value, UUID):
+            result[key] = str(value)
         else:
             result[key] = value
     return result
