@@ -1,0 +1,75 @@
+# Databricks Apps Configuration
+# Senture Orbit - Pharmaceutical Commercial Intelligence Platform
+
+# App metadata
+name: senture-orbit
+description: Pharmaceutical Commercial Intelligence Platform with Databricks Genie AI integration
+
+# Source code configuration
+source_code_path: .
+
+# App configuration
+config:
+  # Enable workspace authentication (recommended for Databricks Apps)
+  auth:
+    type: workspace
+
+  # Resources allocated to the app
+  resources:
+    num_cpus: 2
+    memory_mb: 4096
+
+  # Environment variables for the application
+  env:
+    # Application settings
+    - name: APP_NAME
+      value: "Senture Orbit"
+    - name: DEBUG
+      value: "false"
+
+    # Databricks configuration (uses workspace auth by default in Apps)
+    - name: DATABRICKS_CATALOG
+      value: "pharma_gold"
+    - name: DATABRICKS_SCHEMA
+      value: "gold"
+
+    # Genie configuration
+    - name: GENIE_ENABLED
+      value: "true"
+    - name: GENIE_SPACE_ID
+      description: "Databricks Genie Space ID for AI-powered analytics"
+      required: true
+
+    # Claude AI configuration
+    - name: ANTHROPIC_API_KEY
+      description: "Anthropic API key for Claude AI orchestration"
+      required: true
+      secret: true
+    - name: CLAUDE_MODEL
+      value: "claude-sonnet-4-20250514"
+    - name: CLAUDE_MAX_TOKENS
+      value: "4096"
+
+# Compute configuration for the app
+compute:
+  # SQL Warehouse for executing queries
+  sql_warehouse:
+    name: "orbit-sql-warehouse"
+    description: "SQL Warehouse for Orbit analytics queries"
+    size: "Medium"
+
+# Permissions (optional - configure in Databricks UI)
+permissions:
+  - level: CAN_MANAGE
+    group_name: admins
+  - level: CAN_USE
+    group_name: users
+
+# Health check endpoint
+health_check:
+  path: /health
+  interval_seconds: 30
+  timeout_seconds: 10
+
+# Entrypoint command
+command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

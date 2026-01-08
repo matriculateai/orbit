@@ -10,25 +10,110 @@ Senture Orbit helps pharmaceutical companies analyze sales, stock levels, rep pe
 - **Manager Dashboard**: Territory-specific product and rep performance
 - **Rep Dashboard**: Personalized priorities and customer opportunities
 - **Genie Chat**: Natural language queries powered by Databricks Genie AI
+- **Claude AI Orchestration**: Intelligent question decomposition and parallel query execution
 
 ## Tech Stack
 
 - **Backend**: Python 3.11, FastAPI, Databricks SDK
 - **Frontend**: React 18, TypeScript, Ant Design, Recharts
 - **Database**: Databricks SQL Warehouse (Unity Catalog)
-- **AI**: Databricks Genie Conversation API (Public Preview - Dec 2025)
+- **AI**: Databricks Genie Conversation API + Claude AI (Anthropic)
+- **Deployment**: Databricks Apps (recommended) or standalone
+
+## Deployment Options
+
+### Option 1: Databricks Apps (Recommended)
+
+Deploy as a Databricks App for seamless integration with your workspace:
+
+- **Workspace Authentication**: No need to manage PAT tokens
+- **Single Origin**: Frontend and backend served together
+- **Native Integration**: Direct access to Databricks resources
+
+[See Databricks Apps Deployment Guide](#databricks-apps-deployment)
+
+### Option 2: Local Development / Standalone
+
+Run locally for development or deploy to your own infrastructure:
+
+- **Explicit Credentials**: Uses PAT tokens for authentication
+- **Separate Services**: Frontend and backend run independently
+
+[See Local Development Guide](#local-development)
 
 ## Prerequisites
 
+### For Databricks Apps Deployment
+- Databricks workspace with Apps enabled
+- SQL Warehouse
+- Unity Catalog with `pharma_gold` catalog
+- Genie Space configured with access to gold tables
+- Anthropic API key (for Claude AI orchestration)
+
+### For Local Development
 - Python 3.11+
 - Node.js 18+
-- Databricks workspace with:
-  - SQL Warehouse
-  - Unity Catalog with `pharma_gold` catalog
-  - Genie Space configured with access to gold tables
-- Personal Access Token (PAT) for Databricks
+- Databricks Personal Access Token (PAT)
+- All prerequisites above
 
-## Quick Start
+## Databricks Apps Deployment
+
+### 1. Build the Application
+
+```bash
+cd senture-orbit
+
+# Run the build script
+./scripts/build.sh
+```
+
+This will:
+- Build the React frontend
+- Copy static files to the backend
+- Verify backend dependencies
+
+### 2. Create Databricks App
+
+In your Databricks workspace:
+
+1. Navigate to **Compute** > **Apps**
+2. Click **Create App**
+3. Upload the `senture-orbit` directory
+4. The `app.yaml` will be automatically detected
+
+### 3. Configure Environment Variables
+
+In the Databricks Apps configuration, set these required variables:
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `GENIE_SPACE_ID` | Your Databricks Genie Space ID | Yes |
+| `ANTHROPIC_API_KEY` | Anthropic API key for Claude AI | Yes |
+| `DATABRICKS_WAREHOUSE_ID` | SQL Warehouse ID (if not using HTTP path) | Conditional |
+
+Optional variables:
+- `DATABRICKS_CATALOG` (default: `pharma_gold`)
+- `DATABRICKS_SCHEMA` (default: `gold`)
+- `CLAUDE_MODEL` (default: `claude-sonnet-4-20250514`)
+
+### 4. Deploy
+
+Click **Deploy** in the Databricks Apps UI. The app will:
+- Build the Docker container
+- Start the FastAPI server
+- Serve the React frontend from the same origin
+- Use workspace authentication automatically
+
+### 5. Access Your App
+
+Once deployed, access your app at:
+```
+https://<your-workspace>.cloud.databricks.com/apps/<app-name>
+```
+
+---
+
+## Local Development
 
 ### 1. Configure Environment
 
@@ -53,6 +138,7 @@ DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/your_warehouse_id
 DATABRICKS_CATALOG=pharma_gold
 DATABRICKS_SCHEMA=gold
 GENIE_SPACE_ID=your-genie-space-id
+ANTHROPIC_API_KEY=your-anthropic-api-key
 ```
 
 ### 3. Start the Backend
@@ -95,14 +181,21 @@ npm start
 
 ```
 senture-orbit/
+├── app.yaml                  # Databricks Apps configuration
+├── Dockerfile                # Container build configuration
+├── scripts/
+│   ├── build.sh              # Build script for deployment
+│   └── start.sh              # Startup script
 ├── backend/
 │   ├── app/
 │   │   ├── api/routes/       # API endpoints
-│   │   ├── services/         # Business logic
+│   │   ├── services/         # Business logic (Databricks, Genie, AI)
 │   │   ├── models/           # Pydantic models
 │   │   └── middleware/       # CORS, etc.
+│   ├── static/               # Built frontend (created during build)
 │   ├── tests/                # pytest tests
-│   └── requirements.txt
+│   ├── requirements.txt
+│   └── .env.example          # Environment template
 ├── frontend/
 │   ├── src/
 │   │   ├── components/       # Reusable UI components
@@ -180,7 +273,29 @@ Key implementation details:
 
 ## Troubleshooting
 
-### Common Issues
+### Databricks Apps Issues
+
+1. **"App deployment failed"**
+   - Check the Dockerfile builds successfully locally
+   - Verify all required environment variables are set
+   - Check the app logs in Databricks Apps UI
+
+2. **"Authentication failed in Apps"**
+   - Ensure the SQL Warehouse allows workspace auth
+   - Verify the app has permissions to access the Genie space
+   - Check that DATABRICKS_WAREHOUSE_ID or DATABRICKS_HTTP_PATH is set
+
+3. **"Static files not found"**
+   - Ensure you ran `./scripts/build.sh` before deploying
+   - Verify the frontend built successfully
+   - Check that `backend/static/` contains the built files
+
+4. **"API calls failing with 401"**
+   - In Databricks Apps, workspace auth should be automatic
+   - Check the app's service principal has correct permissions
+   - Verify the Genie space allows the app's identity
+
+### Local Development Issues
 
 1. **"Databricks connection failed"**
    - Verify DATABRICKS_HOST and DATABRICKS_TOKEN
@@ -192,7 +307,7 @@ Key implementation details:
    - Ensure your PAT has access to the Genie space
 
 3. **"Query timeout"**
-   - Complex queries may exceed the 10-minute limit
+   - Complex queries may exceed the 90-second limit
    - Try simplifying the question
    - Check SQL Warehouse queue status
 
@@ -202,11 +317,15 @@ Key implementation details:
 
 ### Viewing Logs
 
-Backend logs appear in the terminal where uvicorn is running. For more verbose output:
-
+**Local development:**
 ```bash
 uvicorn app.main:app --reload --log-level debug
 ```
+
+**Databricks Apps:**
+- Navigate to your app in Databricks
+- Click on the **Logs** tab
+- Filter by severity as needed
 
 ## License
 

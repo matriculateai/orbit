@@ -1,6 +1,7 @@
 """Databricks SQL service for executing queries."""
 import asyncio
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
@@ -16,7 +17,10 @@ _executor = ThreadPoolExecutor(max_workers=10)
 
 
 class DatabricksService:
-    """Service for executing SQL queries against Databricks SQL Warehouse."""
+    """Service for executing SQL queries against Databricks SQL Warehouse.
+
+    Supports both explicit credentials and workspace authentication for Databricks Apps.
+    """
 
     def __init__(self, settings: Settings):
         """Initialize the Databricks service.
@@ -27,6 +31,55 @@ class DatabricksService:
         self.settings = settings
         self._connection: Optional[Connection] = None
 
+    def _get_connection_params(self) -> Dict[str, Any]:
+        """Get connection parameters based on authentication mode.
+
+        Returns:
+            Dictionary of connection parameters for databricks-sql-connector
+        """
+        params: Dict[str, Any] = {}
+
+        if self.settings.use_workspace_auth:
+            # Databricks Apps: Use workspace authentication
+            # The SDK will automatically use the workspace credentials
+            logger.info("Using workspace authentication for Databricks SQL")
+
+            # Get host from environment or settings
+            host = self.settings.effective_databricks_host
+            if host:
+                params["server_hostname"] = host.replace("https://", "").replace("http://", "")
+
+            # HTTP path can come from warehouse ID or direct path
+            if self.settings.DATABRICKS_HTTP_PATH:
+                params["http_path"] = self.settings.DATABRICKS_HTTP_PATH
+            elif self.settings.DATABRICKS_WAREHOUSE_ID:
+                params["http_path"] = f"/sql/1.0/warehouses/{self.settings.DATABRICKS_WAREHOUSE_ID}"
+            else:
+                # Try to get from environment
+                http_path = os.getenv("DATABRICKS_HTTP_PATH")
+                warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+                if http_path:
+                    params["http_path"] = http_path
+                elif warehouse_id:
+                    params["http_path"] = f"/sql/1.0/warehouses/{warehouse_id}"
+
+            # In Databricks Apps, auth is handled automatically
+            # The connector will use the default credential provider chain
+        else:
+            # Local development: Use explicit credentials
+            logger.info("Using explicit token authentication for Databricks SQL")
+
+            if self.settings.DATABRICKS_HOST:
+                params["server_hostname"] = self.settings.DATABRICKS_HOST.replace("https://", "").replace("http://", "")
+
+            if self.settings.DATABRICKS_HTTP_PATH:
+                params["http_path"] = self.settings.DATABRICKS_HTTP_PATH
+
+            if self.settings.DATABRICKS_TOKEN:
+                params["access_token"] = self.settings.DATABRICKS_TOKEN
+
+        return params
+
     def _get_connection(self) -> Connection:
         """Get or create a Databricks SQL connection.
 
@@ -35,11 +88,19 @@ class DatabricksService:
         """
         if self._connection is None:
             logger.info("Creating new Databricks SQL connection")
-            self._connection = databricks_sql.connect(
-                server_hostname=self.settings.DATABRICKS_HOST.replace("https://", ""),
-                http_path=self.settings.DATABRICKS_HTTP_PATH,
-                access_token=self.settings.DATABRICKS_TOKEN,
-            )
+            params = self._get_connection_params()
+
+            if not params.get("server_hostname"):
+                raise ValueError(
+                    "DATABRICKS_HOST is required. Set it in environment or .env file."
+                )
+            if not params.get("http_path"):
+                raise ValueError(
+                    "DATABRICKS_HTTP_PATH or DATABRICKS_WAREHOUSE_ID is required. "
+                    "Set it in environment or .env file."
+                )
+
+            self._connection = databricks_sql.connect(**params)
         return self._connection
 
     def close(self) -> None:
@@ -161,20 +222,23 @@ class DatabricksService:
         Returns:
             Dictionary with connection status and details
         """
+        host = self.settings.effective_databricks_host or self.settings.DATABRICKS_HOST
         try:
             results = await self.execute_query("SELECT 1 as test")
             return {
                 "connected": True,
-                "host": self.settings.DATABRICKS_HOST,
+                "host": host,
                 "catalog": self.settings.DATABRICKS_CATALOG,
                 "schema": self.settings.DATABRICKS_SCHEMA,
+                "auth_mode": "workspace" if self.settings.use_workspace_auth else "token",
             }
         except Exception as e:
             logger.error(f"Connection test failed: {e}")
             return {
                 "connected": False,
                 "error": str(e),
-                "host": self.settings.DATABRICKS_HOST,
+                "host": host,
+                "auth_mode": "workspace" if self.settings.use_workspace_auth else "token",
             }
 
     def get_date_filter(self, date_range: str) -> str:

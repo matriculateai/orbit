@@ -122,12 +122,32 @@ export interface Territory {
   region: string;
 }
 
+// Detect if running in Databricks Apps (same-origin deployment)
+const isDatabricksApps = (): boolean => {
+  // In Databricks Apps, the frontend is served from the same origin as the API
+  // Check if we're on a Databricks domain or if REACT_APP_API_URL is empty/relative
+  const hostname = window.location.hostname;
+  return (
+    hostname.includes('databricks.com') ||
+    hostname.includes('azuredatabricks.net') ||
+    hostname.includes('databricks.azure') ||
+    process.env.REACT_APP_API_URL === '' ||
+    process.env.REACT_APP_API_URL === '/'
+  );
+};
+
 // API Client Class
 class ApiClient {
   private client: AxiosInstance;
 
   constructor() {
-    const baseURL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+    // In Databricks Apps, use relative URLs (same-origin deployment)
+    // In local development, use the configured API URL
+    const baseURL = isDatabricksApps()
+      ? ''  // Empty string for same-origin requests
+      : (process.env.REACT_APP_API_URL || 'http://localhost:8000');
+
+    console.log(`API Client initialized: baseURL=${baseURL || '(same-origin)'}, isDatabricksApps=${isDatabricksApps()}`);
 
     this.client = axios.create({
       baseURL,
@@ -135,6 +155,8 @@ class ApiClient {
         'Content-Type': 'application/json',
       },
       timeout: 300000, // 5 minute timeout for AI orchestration queries
+      // Ensure cookies are sent for same-origin requests in Databricks Apps
+      withCredentials: isDatabricksApps(),
     });
 
     // Response interceptor for error handling

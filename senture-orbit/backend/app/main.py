@@ -1,13 +1,17 @@
 """Senture Orbit API - Pharmaceutical Commercial Intelligence Platform.
 
 FastAPI application for pharmaceutical analytics with Databricks Genie integration.
+Supports deployment as a Databricks App with workspace authentication.
 """
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api import api_router
 from app.config import get_settings
@@ -27,8 +31,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     settings = get_settings()
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    logger.info(f"Databricks Host: {settings.DATABRICKS_HOST}")
+    logger.info(f"Databricks Host: {settings.effective_databricks_host}")
+    logger.info(f"Auth Mode: {'workspace' if settings.use_workspace_auth else 'token'}")
     logger.info(f"Genie Enabled: {settings.GENIE_ENABLED}")
+
+    if settings.use_workspace_auth:
+        logger.info("Running in Databricks Apps mode with workspace authentication")
+    else:
+        logger.info("Running in local development mode with token authentication")
 
     yield
 
@@ -70,6 +80,44 @@ def create_app() -> FastAPI:
                 "detail": str(exc) if settings.DEBUG else "An unexpected error occurred",
             },
         )
+
+    # Serve static files for frontend in Databricks Apps
+    static_path = Path(settings.STATIC_FILES_PATH)
+    if static_path.exists() and static_path.is_dir():
+        logger.info(f"Serving static files from: {static_path}")
+
+        # Mount static assets (JS, CSS, images)
+        static_assets = static_path / "static"
+        if static_assets.exists():
+            app.mount("/static", StaticFiles(directory=str(static_assets)), name="static")
+
+        # Serve index.html for SPA routes
+        @app.get("/{full_path:path}")
+        async def serve_spa(request: Request, full_path: str) -> FileResponse:
+            """Serve the React SPA for all non-API routes."""
+            # Skip API routes and docs
+            if full_path.startswith(("api/", "docs", "redoc", "openapi.json", "health")):
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": "Not found"}
+                )
+
+            # Try to serve the exact file if it exists
+            file_path = static_path / full_path
+            if file_path.exists() and file_path.is_file():
+                return FileResponse(str(file_path))
+
+            # Otherwise serve index.html for SPA routing
+            index_path = static_path / "index.html"
+            if index_path.exists():
+                return FileResponse(str(index_path))
+
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Not found"}
+            )
+    else:
+        logger.info(f"Static files not found at {static_path}, running in API-only mode")
 
     return app
 

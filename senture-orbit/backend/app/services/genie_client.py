@@ -5,9 +5,11 @@ This client implements the latest Databricks Genie Conversation API with:
 - Exponential backoff polling
 - Proper message status handling
 - Response parsing for SQL, data, and text
+- Support for both workspace auth (Databricks Apps) and token auth
 """
 import asyncio
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -15,6 +17,42 @@ import httpx
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+def get_workspace_auth_token() -> Optional[str]:
+    """Get authentication token for workspace auth in Databricks Apps.
+
+    In Databricks Apps, credentials are available through environment variables
+    or the default credential provider chain.
+
+    Returns:
+        Authentication token if available, None otherwise
+    """
+    # Try to get token from various Databricks environment variables
+    token = os.getenv("DATABRICKS_TOKEN")
+    if token:
+        return token
+
+    # In Databricks Apps, try to use the SDK's auth
+    try:
+        from databricks.sdk import WorkspaceClient
+        # The WorkspaceClient will automatically use workspace auth in Apps
+        w = WorkspaceClient()
+        # Get a token from the workspace client's auth
+        config = w.config
+        if hasattr(config, 'token') and config.token:
+            return config.token
+        # For OAuth-based auth, we may need to get an access token
+        if hasattr(config, 'authenticate'):
+            headers = {}
+            config.authenticate(headers)
+            auth_header = headers.get('Authorization', '')
+            if auth_header.startswith('Bearer '):
+                return auth_header[7:]
+    except Exception as e:
+        logger.debug(f"Could not get token from WorkspaceClient: {e}")
+
+    return None
 
 
 class GenieClient:
@@ -25,6 +63,9 @@ class GenieClient:
     - Send follow-up messages
     - Poll for completion with exponential backoff
     - Parse attachments (SQL, data, text, visualizations)
+
+    Supports both workspace authentication (for Databricks Apps) and
+    explicit token authentication (for local development).
     """
 
     # API endpoints
@@ -49,18 +90,43 @@ class GenieClient:
         """
         self.settings = settings
         self.space_id = settings.GENIE_SPACE_ID
-        self.base_url = settings.DATABRICKS_HOST.rstrip("/")
+
+        # Get base URL from settings or environment
+        host = settings.effective_databricks_host
+        if not host:
+            host = settings.DATABRICKS_HOST or ""
+        self.base_url = host.rstrip("/") if host else ""
+
+        # Get authentication token
+        if settings.use_workspace_auth:
+            logger.info("Initializing Genie client with workspace authentication")
+            token = get_workspace_auth_token()
+        else:
+            logger.info("Initializing Genie client with explicit token authentication")
+            token = settings.DATABRICKS_TOKEN
+
+        # Build headers
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
 
         # HTTP client with auth - increased limits for parallel queries
         self.client = httpx.AsyncClient(
             base_url=self.base_url,
-            headers={
-                "Authorization": f"Bearer {settings.DATABRICKS_TOKEN}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             timeout=httpx.Timeout(30.0, connect=10.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         )
+
+    async def _refresh_auth_if_needed(self) -> None:
+        """Refresh authentication token if using workspace auth.
+
+        In Databricks Apps, tokens may need to be refreshed periodically.
+        """
+        if self.settings.use_workspace_auth:
+            token = get_workspace_auth_token()
+            if token:
+                self.client.headers["Authorization"] = f"Bearer {token}"
 
     async def close(self) -> None:
         """Close the HTTP client."""
@@ -410,6 +476,9 @@ class GenieClient:
         Returns:
             Formatted response with SQL, data, and text
         """
+        # Refresh auth token if needed (for workspace auth)
+        await self._refresh_auth_if_needed()
+
         try:
             # Start new conversation or add to existing
             if conversation_id:
@@ -698,6 +767,9 @@ class GenieClient:
             Dictionary with connection status
         """
         try:
+            # Refresh auth before testing
+            await self._refresh_auth_if_needed()
+
             spaces = await self.list_spaces()
             space_found = any(s.get("id") == self.space_id for s in spaces)
 
@@ -706,12 +778,14 @@ class GenieClient:
                 "space_configured": bool(self.space_id),
                 "space_found": space_found,
                 "space_count": len(spaces),
+                "auth_mode": "workspace" if self.settings.use_workspace_auth else "token",
             }
         except Exception as e:
             logger.error(f"Genie connection test failed: {e}")
             return {
                 "available": False,
                 "error": str(e),
+                "auth_mode": "workspace" if self.settings.use_workspace_auth else "token",
             }
 
     async def get_conversation_history(
