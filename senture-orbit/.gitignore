@@ -13,6 +13,10 @@ build/
 dist/
 *.egg-info/
 
+# Frontend build output (served by backend in Databricks Apps)
+backend/static/
+frontend/build/
+
 # IDE
 .idea/
 .vscode/
@@ -23,6 +27,10 @@ dist/
 .env
 .env.local
 .env.*.local
+
+# Databricks
+.databricks/
+.databricks.json
 
 # Logs
 *.log
@@ -46,3 +54,11 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+
+# Package lock files (optional - remove if you want to track)
+# package-lock.json
+
+# Python artifacts
+*.egg
+*.whl
+pip-wheel-metadata/

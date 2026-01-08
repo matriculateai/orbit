@@ -82,7 +82,7 @@ def create_app() -> FastAPI:
         )
 
     # Serve static files for frontend in Databricks Apps
-    static_path = Path(settings.STATIC_FILES_PATH)
+    static_path = Path(settings.STATIC_FILES_PATH).resolve()
     if static_path.exists() and static_path.is_dir():
         logger.info(f"Serving static files from: {static_path}")
 
@@ -102,10 +102,32 @@ def create_app() -> FastAPI:
                     content={"error": "Not found"}
                 )
 
-            # Try to serve the exact file if it exists
-            file_path = static_path / full_path
-            if file_path.exists() and file_path.is_file():
-                return FileResponse(str(file_path))
+            # SECURITY: Prevent path traversal attacks
+            # Resolve the full path and verify it's within the static directory
+            try:
+                # Normalize and resolve the requested path
+                requested_path = (static_path / full_path).resolve()
+
+                # Verify the resolved path is within the static directory
+                # This prevents ../../../etc/passwd style attacks
+                if not str(requested_path).startswith(str(static_path)):
+                    logger.warning(f"Path traversal attempt blocked: {full_path}")
+                    return JSONResponse(
+                        status_code=403,
+                        content={"error": "Forbidden"}
+                    )
+
+                # Serve the file if it exists and is a regular file
+                if requested_path.exists() and requested_path.is_file():
+                    return FileResponse(str(requested_path))
+
+            except (ValueError, OSError) as e:
+                # Invalid path (e.g., null bytes, invalid characters)
+                logger.warning(f"Invalid path requested: {full_path}, error: {e}")
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Invalid path"}
+                )
 
             # Otherwise serve index.html for SPA routing
             index_path = static_path / "index.html"
