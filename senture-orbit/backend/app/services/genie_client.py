@@ -62,9 +62,19 @@ class GenieClient:
 
         Args:
             settings: Application settings
+
+        Raises:
+            ValueError: If GENIE_SPACE_ID is not configured when Genie is enabled
         """
         self.settings = settings
         self.space_id = settings.GENIE_SPACE_ID
+
+        # Validate Genie space ID if Genie is enabled
+        if settings.GENIE_ENABLED and not self.space_id:
+            raise ValueError(
+                "GENIE_SPACE_ID is required when GENIE_ENABLED=true. "
+                "Set it in the environment or .env file."
+            )
 
         # Initialize the Databricks SDK WorkspaceClient
         # It auto-configures based on environment

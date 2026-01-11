@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import Settings, get_settings
-from app.services.databricks import DatabricksService
+from app.services.databricks import DatabricksService, sanitize_identifier, sanitize_string_value
 from app.services.persona_formatter import PersonaFormatter
 
 router = APIRouter()
@@ -40,7 +40,8 @@ async def get_opportunities(
         filters = [f"dsoh_days < {max_dsoh}", "opportunity_value > 0"]
 
         if region:
-            filters.append(f"region = '{region}'")
+            safe_region = sanitize_identifier(region, "region")
+            filters.append(f"region = '{safe_region}'")
 
         if min_value:
             filters.append(f"opportunity_value >= {min_value}")
@@ -227,6 +228,7 @@ async def get_customer_opportunities(
     """Get all opportunities for a specific customer."""
     try:
         settings = get_settings()
+        safe_customer_name = sanitize_string_value(customer_name, "customer_name")
 
         query = f"""
         SELECT
@@ -243,7 +245,7 @@ async def get_customer_opportunities(
             opportunity_units,
             opportunity_value
         FROM {settings.DATABRICKS_CATALOG}.{settings.DATABRICKS_SCHEMA}.mv_kpi_dashboard
-        WHERE customer_name = '{customer_name}'
+        WHERE customer_name = '{safe_customer_name}'
             AND dsoh_days < 45
             AND opportunity_value > 0
         ORDER BY opportunity_value DESC

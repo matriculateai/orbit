@@ -281,8 +281,19 @@ class AIOrchestrator:
 
         Args:
             settings: Application settings
+
+        Raises:
+            ValueError: If ANTHROPIC_API_KEY is not configured
         """
         self.settings = settings
+
+        # Validate required API key
+        if not settings.ANTHROPIC_API_KEY:
+            raise ValueError(
+                "ANTHROPIC_API_KEY is required for AI orchestration. "
+                "Set it in the environment or .env file."
+            )
+
         self.claude = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
         self.genie_client = GenieClient(settings)
 

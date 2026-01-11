@@ -5,6 +5,7 @@ Uses the Databricks SDK for authentication (best practice).
 import asyncio
 import logging
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional
 
@@ -18,6 +19,85 @@ logger = logging.getLogger(__name__)
 
 # Thread pool for running blocking database operations
 _executor = ThreadPoolExecutor(max_workers=10)
+
+# Pattern for valid SQL identifiers (alphanumeric, underscores, hyphens)
+_SAFE_IDENTIFIER_PATTERN = re.compile(r'^[a-zA-Z0-9_\-]+$')
+
+# Maximum length for string values to prevent abuse
+_MAX_STRING_VALUE_LENGTH = 500
+
+
+def sanitize_identifier(value: str, param_name: str = "value") -> str:
+    """Sanitize a string to prevent SQL injection.
+
+    Only allows alphanumeric characters, underscores, and hyphens.
+    Raises ValueError if the input contains potentially dangerous characters.
+
+    Args:
+        value: The string to sanitize
+        param_name: Name of the parameter (for error messages)
+
+    Returns:
+        The sanitized string (same as input if valid)
+
+    Raises:
+        ValueError: If the input contains invalid characters
+    """
+    if not value:
+        raise ValueError(f"{param_name} cannot be empty")
+
+    if not _SAFE_IDENTIFIER_PATTERN.match(value):
+        raise ValueError(
+            f"Invalid {param_name}: contains disallowed characters. "
+            f"Only alphanumeric, underscores, and hyphens are allowed."
+        )
+
+    # Additional check for SQL keywords that could be dangerous
+    dangerous_patterns = [
+        "--", ";", "/*", "*/", "xp_", "sp_",
+        "drop", "delete", "truncate", "insert", "update",
+        "exec", "execute", "union", "select"
+    ]
+    lower_value = value.lower()
+    for pattern in dangerous_patterns:
+        if pattern in lower_value:
+            raise ValueError(f"Invalid {param_name}: contains disallowed pattern '{pattern}'")
+
+    return value
+
+
+def sanitize_string_value(value: str, param_name: str = "value") -> str:
+    """Sanitize a string value for safe SQL string literals.
+
+    Escapes single quotes and validates length to prevent SQL injection.
+    Use this for user-provided string values like customer names.
+
+    Args:
+        value: The string to sanitize
+        param_name: Name of the parameter (for error messages)
+
+    Returns:
+        The sanitized string safe for SQL string literals
+
+    Raises:
+        ValueError: If the input is invalid
+    """
+    if not value:
+        raise ValueError(f"{param_name} cannot be empty")
+
+    if len(value) > _MAX_STRING_VALUE_LENGTH:
+        raise ValueError(f"{param_name} exceeds maximum length of {_MAX_STRING_VALUE_LENGTH}")
+
+    # Escape single quotes by doubling them (SQL standard)
+    escaped = value.replace("'", "''")
+
+    # Check for dangerous patterns that shouldn't appear in normal values
+    dangerous_patterns = ["--", ";", "/*", "*/", "xp_", "sp_"]
+    for pattern in dangerous_patterns:
+        if pattern in escaped:
+            raise ValueError(f"Invalid {param_name}: contains disallowed pattern")
+
+    return escaped
 
 
 class DatabricksService:
@@ -381,7 +461,14 @@ class DatabricksService:
         Returns:
             List of opportunity dictionaries
         """
-        region_filter = f"AND region = '{region}'" if region else ""
+        # Sanitize inputs to prevent SQL injection
+        region_filter = ""
+        if region:
+            safe_region = sanitize_identifier(region, "region")
+            region_filter = f"AND region = '{safe_region}'"
+
+        # Validate limit is a reasonable integer
+        safe_limit = max(1, min(int(limit), 1000))
 
         query = f"""
         SELECT
@@ -402,7 +489,7 @@ class DatabricksService:
             AND opportunity_value > 0
             {region_filter}
         ORDER BY opportunity_value DESC
-        LIMIT {limit}
+        LIMIT {safe_limit}
         """
 
         try:
@@ -425,13 +512,15 @@ class DatabricksService:
         Returns:
             Dictionary with territory data
         """
+        # Sanitize territory_id to prevent SQL injection
+        safe_territory_id = sanitize_identifier(territory_id, "territory_id")
         date_filter = self.get_date_filter(date_range)
 
         # Get the region for this territory from dim_rep
         region_query = f"""
         SELECT DISTINCT region
         FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_rep
-        WHERE territory = '{territory_id}'
+        WHERE territory = '{safe_territory_id}'
         LIMIT 1
         """
 
@@ -440,25 +529,29 @@ class DatabricksService:
             region = region_results[0]["region"] if region_results else None
 
             # Product performance query
-            product_query = f"""
-            SELECT
-                p.product_id,
-                p.product_code,
-                p.product_name,
-                p.brand,
-                SUM(s.secondary_value) as total_sales,
-                SUM(s.delivered_qty) as units_sold,
-                COUNT(DISTINCT s.customer_id) as customer_count
-            FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.fact_secondary_sales_daily s
-            JOIN {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_product p
-                ON s.product_id = p.product_id
-            JOIN {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_customer c
-                ON s.customer_id = c.customer_id
-            WHERE c.region = '{region}' AND {date_filter}
-            GROUP BY p.product_id, p.product_code, p.product_name, p.brand
-            ORDER BY total_sales DESC
-            LIMIT 10
-            """ if region else None
+            product_query = None
+            if region:
+                # Region comes from database, but sanitize anyway for safety
+                safe_region = sanitize_identifier(region, "region")
+                product_query = f"""
+                SELECT
+                    p.product_id,
+                    p.product_code,
+                    p.product_name,
+                    p.brand,
+                    SUM(s.secondary_value) as total_sales,
+                    SUM(s.delivered_qty) as units_sold,
+                    COUNT(DISTINCT s.customer_id) as customer_count
+                FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.fact_secondary_sales_daily s
+                JOIN {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_product p
+                    ON s.product_id = p.product_id
+                JOIN {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_customer c
+                    ON s.customer_id = c.customer_id
+                WHERE c.region = '{safe_region}' AND {date_filter}
+                GROUP BY p.product_id, p.product_code, p.product_name, p.brand
+                ORDER BY total_sales DESC
+                LIMIT 10
+                """
 
             # Rep performance query
             rep_query = f"""
@@ -475,7 +568,7 @@ class DatabricksService:
             FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.fact_rep_activity_monthly a
             JOIN {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_rep r
                 ON a.rep_id = r.rep_id
-            WHERE r.territory = '{territory_id}'
+            WHERE r.territory = '{safe_territory_id}'
                 AND a.yyyymm = DATE_FORMAT(CURRENT_DATE - INTERVAL 1 MONTH, 'yyyyMM')
             ORDER BY a.strike_rate DESC
             """
@@ -509,6 +602,10 @@ class DatabricksService:
         Returns:
             Dictionary with rep dashboard data
         """
+        # Sanitize rep_id to prevent SQL injection
+        safe_rep_id = sanitize_identifier(rep_id, "rep_id")
+        safe_limit = max(1, min(int(limit), 1000))
+
         # Rep performance query
         perf_query = f"""
         SELECT
@@ -525,14 +622,14 @@ class DatabricksService:
         FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.fact_rep_activity_monthly a
         JOIN {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_rep r
             ON a.rep_id = r.rep_id
-        WHERE r.rep_id = '{rep_id}'
+        WHERE r.rep_id = '{safe_rep_id}'
             AND a.yyyymm = DATE_FORMAT(CURRENT_DATE - INTERVAL 1 MONTH, 'yyyyMM')
         """
 
         # Get rep's region for opportunities
         region_query = f"""
         SELECT region FROM {self.settings.DATABRICKS_CATALOG}.{self.settings.DATABRICKS_SCHEMA}.dim_rep
-        WHERE rep_id = '{rep_id}'
+        WHERE rep_id = '{safe_rep_id}'
         """
 
         try:
@@ -544,7 +641,7 @@ class DatabricksService:
 
             opportunities = []
             if region:
-                opportunities = await self.get_top_opportunities(limit=limit, region=region)
+                opportunities = await self.get_top_opportunities(limit=safe_limit, region=region)
 
             # Priority opportunities (top 5 by value)
             priority = opportunities[:5] if opportunities else []

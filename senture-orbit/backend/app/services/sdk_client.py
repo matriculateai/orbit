@@ -12,6 +12,7 @@ The SDK automatically handles:
 - Error handling
 """
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import Any, Dict, Optional
 
@@ -21,6 +22,10 @@ from databricks.sdk.core import Config
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
+
+# Module-level thread pool for running blocking SDK operations
+# Reuse across all async calls for efficiency
+_executor = ThreadPoolExecutor(max_workers=10)
 
 
 class DatabricksSDKClient:
@@ -149,7 +154,6 @@ class DatabricksSDKClient:
             Dictionary with columns and data
         """
         import asyncio
-        from concurrent.futures import ThreadPoolExecutor
 
         wh_id = warehouse_id or self.settings.DATABRICKS_WAREHOUSE_ID
         if not wh_id:
@@ -175,10 +179,9 @@ class DatabricksSDKClient:
             )
             return response
 
-        # Run in thread pool for async compatibility
+        # Run in module-level thread pool for async compatibility
         loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            response = await loop.run_in_executor(executor, _execute)
+        response = await loop.run_in_executor(_executor, _execute)
 
         # Parse response
         result = {
@@ -243,14 +246,12 @@ class DatabricksSDKClient:
             Response JSON as dictionary
         """
         import asyncio
-        from concurrent.futures import ThreadPoolExecutor
 
         def _request():
             return self.client.api_client.do(method, path, body=body)
 
         loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            return await loop.run_in_executor(executor, _request)
+        return await loop.run_in_executor(_executor, _request)
 
     def close(self) -> None:
         """Close the SDK client.

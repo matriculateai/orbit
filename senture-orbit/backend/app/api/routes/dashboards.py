@@ -11,7 +11,7 @@ from app.models.responses import (
     ManagerDashboardResponse,
     RepDashboardResponse,
 )
-from app.services.databricks import DatabricksService
+from app.services.databricks import DatabricksService, sanitize_identifier
 from app.services.persona_formatter import PersonaFormatter
 
 router = APIRouter()
@@ -184,7 +184,10 @@ async def get_rep_performance(
     """Get rep performance data, optionally filtered by territory."""
     try:
         settings = get_settings()
-        territory_filter = f"AND r.territory = '{territory_id}'" if territory_id else ""
+        territory_filter = ""
+        if territory_id:
+            safe_territory_id = sanitize_identifier(territory_id, "territory_id")
+            territory_filter = f"AND r.territory = '{safe_territory_id}'"
 
         query = f"""
         SELECT
@@ -264,6 +267,7 @@ async def get_my_performance(
     """Get performance metrics for a specific rep."""
     try:
         settings = get_settings()
+        safe_rep_id = sanitize_identifier(rep_id, "rep_id")
         query = f"""
         SELECT
             r.rep_id,
@@ -276,7 +280,7 @@ async def get_my_performance(
         FROM {settings.DATABRICKS_CATALOG}.{settings.DATABRICKS_SCHEMA}.fact_rep_activity_monthly a
         JOIN {settings.DATABRICKS_CATALOG}.{settings.DATABRICKS_SCHEMA}.dim_rep r
             ON a.rep_id = r.rep_id
-        WHERE r.rep_id = '{rep_id}'
+        WHERE r.rep_id = '{safe_rep_id}'
             AND a.yyyymm = DATE_FORMAT(CURRENT_DATE - INTERVAL 1 MONTH, 'yyyyMM')
         """
         results = await db.execute_query(query)
