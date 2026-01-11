@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Optional
 import anthropic
 
 from app.config import Settings
-from app.services.databricks import DatabricksService
 from app.services.genie_client import GenieClient
 
 logger = logging.getLogger(__name__)
@@ -286,12 +285,10 @@ class AIOrchestrator:
         self.settings = settings
         self.claude = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
         self.genie_client = GenieClient(settings)
-        self.databricks = DatabricksService(settings)
 
     async def close(self) -> None:
         """Close all connections."""
         await self.genie_client.close()
-        self.databricks.close()
 
     async def process_question(
         self,

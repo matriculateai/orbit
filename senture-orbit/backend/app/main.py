@@ -31,14 +31,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     settings = get_settings()
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    logger.info(f"Databricks Host: {settings.effective_databricks_host}")
-    logger.info(f"Auth Mode: {'workspace' if settings.use_workspace_auth else 'token'}")
     logger.info(f"Genie Enabled: {settings.GENIE_ENABLED}")
-
-    if settings.use_workspace_auth:
-        logger.info("Running in Databricks Apps mode with workspace authentication")
-    else:
-        logger.info("Running in local development mode with token authentication")
+    logger.info("Databricks SDK will handle authentication automatically")
 
     yield
 
